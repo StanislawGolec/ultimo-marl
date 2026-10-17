@@ -1,3 +1,59 @@
-"""ASCII line-delimited wire protocol codec and TCP socket client."""
+"""ASCII line-delimited wire protocol codec and TCP socket client for Ultimo."""
 
-__all__: list[str] = []
+from ultimo_marl.protocol.client import TcpGameClient
+from ultimo_marl.protocol.codec import ProtocolCodec
+from ultimo_marl.protocol.events import (
+    Chat,
+    ChatBroadcast,
+    ClientCommand,
+    CommandType,
+    Draw,
+    DrawResult,
+    ErrorEvent,
+    EventType,
+    GameOver,
+    HandUpdate,
+    Join,
+    OpponentUpdate,
+    Pass,
+    Ping,
+    Play,
+    Pong,
+    ProtocolError,
+    ProtocolException,
+    RoomStatus,
+    ServerEvent,
+    Start,
+    TopCard,
+    TurnAnnounced,
+    Welcome,
+)
+
+__all__ = [
+    "Chat",
+    "ChatBroadcast",
+    "ClientCommand",
+    "CommandType",
+    "Draw",
+    "DrawResult",
+    "ErrorEvent",
+    "EventType",
+    "GameOver",
+    "HandUpdate",
+    "Join",
+    "OpponentUpdate",
+    "Pass",
+    "Ping",
+    "Play",
+    "Pong",
+    "ProtocolCodec",
+    "ProtocolError",
+    "ProtocolException",
+    "RoomStatus",
+    "ServerEvent",
+    "Start",
+    "TcpGameClient",
+    "TopCard",
+    "TurnAnnounced",
+    "Welcome",
+]
