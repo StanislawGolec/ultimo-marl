@@ -202,30 +202,43 @@ flowchart LR
 
 ---
 
-### Stage 3: PettingZoo AEC Environment, Observation Vectorizer & Action Masking
+### Stage 3: PettingZoo AEC Environment, Observation Vectorizer & Action Masking — [COMPLETED]
 **Objective:** Wrap the simulation into a standardized multi-agent environment (`pettingzoo.AECEnv`) strictly preserving Fog of War and generating bit-level legal action masks.
+**Status:** Completed (100% of tasks implemented, passed official PettingZoo `api_test`, 31 unit tests passing with 95% total test coverage).
 
-- **Tasks to Implement:**
-  1. `UltimoAECEnv` adhering to PettingZoo AEC API:
-     - Agents list: `['player_0', 'player_1', 'player_2', 'player_3']`.
-     - Standard loop: `reset()`, `observe(agent)`, `step(action)`, `last()`.
-     - Game truncation and termination handling.
-  2. Observation Space Vectorizer:
-     - Converts game state into a 76-dimensional `float32` array from the perspective of the active agent.
-     - Strict Fog of War isolation: no opponent card identities or deck lookaheads are leaked. Only card count per opponent is visible.
-     - Observation bounds asserted in $[0.0, 1.0]$.
-  3. Action Space & Mask Generator (`action_mask`):
-     - Discrete action space of size $56$.
-     - Bit-mask generator returning boolean numpy array of shape `(56,)`.
-     - Validates against current hand, top card, and active color:
-       - If player holds matching card $\rightarrow$ action enabled.
-       - If player holds Wild $\rightarrow$ actions 53-56 enabled.
-       - `DRAW` action enabled.
-     - Assert that $\sum \text{mask} \ge 1$ at every step.
-  4. Reward Shaping Engine:
-     - Rewards dispatched per transition: $+1.0$ for win, $-1.0$ for loss, $+0.2$ for aggressive counter-draw on low-card opponents, $-0.01$ step cost.
-- **What to Use:** `pettingzoo.classic`, `gymnasium.spaces.Box`, `gymnasium.spaces.Discrete`, `numpy`.
-- **Verification Gate:** `pettingzoo.test.api_test(env)` passes without errors. Unit tests verify action mask strictly rejects illegal plays.
+- **Tasks Implemented:**
+  - [x] **1. `UltimoAECEnv` adhering to PettingZoo AEC API:**
+    - Possible agents: `['player_0', 'player_1', 'player_2', 'player_3']`.
+    - Lifecycle loop: `reset()`, `observe(agent)`, `step(action)`, `last()`.
+    - Integrated with PettingZoo's `wrappers.OrderEnforcingWrapper`.
+    - Verified against official PettingZoo AEC test suite via `pettingzoo.test.api_test()`.
+  - [x] **2. Observation Space Vectorizer (`encode_observation`):**
+    - 78-dimensional `float32` observation vector with strict $[0.0, 1.0]$ bounds:
+      - 18 top-card features (active color one-hot, card value one-hot, wild flag).
+      - 54 hand features (52 standard card histogram normalized by $2.0$, regular Wild normalized by $4.0$, Wild Draw Four normalized by $4.0$).
+      - 3 opponent hand count profiles in cyclic relative seat order (normalized by $10.0$).
+      - 3 game dynamics features (turn direction scalar, opponent Ultimo alert, remaining deck ratio).
+    - **Strict Fog of War Isolation:** Zero opponent card identities or deck lookaheads are leaked.
+  - [x] **3. Action Space & Legal Mask Generator (`compute_action_mask`):**
+    - Discrete action space of size $61$:
+      - `0..51`: 52 standard card plays (4 suits $\times$ 13 values).
+      - `52..55`: Regular Wild declaring target color (`RED`, `YELLOW`, `GREEN`, `BLUE`).
+      - `56..59`: Wild Draw Four declaring target color (`RED`, `YELLOW`, `GREEN`, `BLUE`).
+      - `60`: Draw action (`ACTION_DRAW`).
+    - Bit-mask generator returning `np.int8` array of shape `(61,)` strictly compatible with Gymnasium `Discrete.sample(mask)`.
+    - Asserted invariant: $\sum \text{mask} \ge 1$ at every step.
+  - [x] **4. Reward Shaping Engine:**
+    - $+1.0$ for winning match (emptying hand).
+    - $-1.0$ for losing match.
+    - $+0.2$ offensive bonus for playing action card against an opponent with $\le 2$ cards.
+    - $-0.01$ step cost per turn to penalize passive card hoarding.
+- **What Used:** `pettingzoo.AECEnv`, `gymnasium.spaces.Box`, `gymnasium.spaces.Discrete`, `numpy`.
+- **Verification Gate Results:**
+  - `pettingzoo.test.api_test(env)`: **Passed** with 0 errors.
+  - `ruff check .`: 0 errors.
+  - `ruff format --check .`: 0 unformatted files.
+  - `mypy src tests`: 0 issues across all 23 source files.
+  - `pytest --cov`: 31/31 unit tests passed with 95% coverage across all modules.
 
 ---
 

@@ -24,11 +24,12 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
-venv/
-env/
-ENV/
-.venv/
+# Virtual environments (root only)
+/venv/
+/env/
+/ENV/
+/.venv/
+!src/**/env/
 
 # Testing & Quality Assurance
 .pytest_cache/
