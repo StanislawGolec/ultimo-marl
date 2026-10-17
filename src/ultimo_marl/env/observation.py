@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ultimo_marl.domain.card import CardColor, CardValue
+from ultimo_marl.domain.card import CardValue
 from ultimo_marl.domain.simulator import UltimoSimulator
 from ultimo_marl.domain.turn_manager import Direction
 from ultimo_marl.env.action_mapping import STANDARD_SUITS, STANDARD_VALUES

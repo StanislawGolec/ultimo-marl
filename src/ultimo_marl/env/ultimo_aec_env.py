@@ -81,10 +81,10 @@ class UltimoAECEnv(AECEnv):
 
         # AEC State attributes
         self.agent_selection: str = self.possible_agents[0]
-        self.rewards: dict[str, float] = {a: 0.0 for a in self.possible_agents}
-        self._cumulative_rewards: dict[str, float] = {a: 0.0 for a in self.possible_agents}
-        self.terminations: dict[str, bool] = {a: False for a in self.possible_agents}
-        self.truncations: dict[str, bool] = {a: False for a in self.possible_agents}
+        self.rewards: dict[str, float] = dict.fromkeys(self.possible_agents, 0.0)
+        self._cumulative_rewards: dict[str, float] = dict.fromkeys(self.possible_agents, 0.0)
+        self.terminations: dict[str, bool] = dict.fromkeys(self.possible_agents, False)
+        self.truncations: dict[str, bool] = dict.fromkeys(self.possible_agents, False)
         self.infos: dict[str, dict[str, Any]] = {a: {} for a in self.possible_agents}
 
     def observation_space(self, agent: str) -> spaces.Box:
@@ -108,10 +108,10 @@ class UltimoAECEnv(AECEnv):
         first_player_idx = self._sim.current_player_idx
         self.agent_selection = self.possible_agents[first_player_idx]
 
-        self.rewards = {a: 0.0 for a in self.possible_agents}
-        self._cumulative_rewards = {a: 0.0 for a in self.possible_agents}
-        self.terminations = {a: False for a in self.possible_agents}
-        self.truncations = {a: False for a in self.possible_agents}
+        self.rewards = dict.fromkeys(self.possible_agents, 0.0)
+        self._cumulative_rewards = dict.fromkeys(self.possible_agents, 0.0)
+        self.terminations = dict.fromkeys(self.possible_agents, False)
+        self.truncations = dict.fromkeys(self.possible_agents, False)
 
         self._update_infos()
 
@@ -122,10 +122,7 @@ class UltimoAECEnv(AECEnv):
 
     def step(self, action: int | None) -> None:
         """Execute one agent action in the environment."""
-        if (
-            self.terminations[self.agent_selection]
-            or self.truncations[self.agent_selection]
-        ):
+        if self.terminations[self.agent_selection] or self.truncations[self.agent_selection]:
             self._was_dead_step(action)
             return
 
