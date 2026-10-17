@@ -3,25 +3,26 @@
 
 import argparse
 import sys
+from pathlib import Path
 
 from ultimo_marl.agents import (
     BaseAgent,
+    DQNAgent,
     RandomAgent,
     RuleBasedHeuristicAgent,
     Tournament,
 )
 
 
-def make_agent(name: str, strategy: str) -> BaseAgent:
+def make_agent(name: str, strategy: str, model_path: str | None = None) -> BaseAgent:
     """Instantiate agent from strategy identifier."""
     if strategy == "heuristic":
         return RuleBasedHeuristicAgent(name=name)
     if strategy == "random":
         return RandomAgent(name=name)
     if strategy == "dqn":
-        # Placeholder until Stage 5
-        print(f"[Warning] DQN agent not loaded yet, falling back to Heuristic for {name}")
-        return RuleBasedHeuristicAgent(name=name)
+        valid_path = model_path if (model_path and Path(model_path).is_file()) else None
+        return DQNAgent(name=name, checkpoint_path=valid_path)
     raise ValueError(f"Unknown strategy: {strategy}")
 
 
@@ -73,8 +74,10 @@ def main() -> int:
     )
 
     # In a 4-player match, create 1 Agent A and 3 Agent B to evaluate win rate of A vs 3 B
-    agent_a = make_agent("Candidate_A", args.agent_a)
-    opponents = [make_agent(f"Baseline_B{i}", args.agent_b) for i in range(1, 4)]
+    agent_a = make_agent("Candidate_A", args.agent_a, model_path=args.model_path)
+    opponents = [
+        make_agent(f"Baseline_B{i}", args.agent_b, model_path=args.model_path) for i in range(1, 4)
+    ]
     all_agents: list[BaseAgent] = [agent_a, *opponents]
 
     tournament = Tournament(agents=all_agents)

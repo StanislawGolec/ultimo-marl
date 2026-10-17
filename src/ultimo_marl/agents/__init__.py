@@ -1,6 +1,7 @@
 """Agent implementations and evaluation tournament framework."""
 
 from ultimo_marl.agents.base import BaseAgent
+from ultimo_marl.agents.dqn_agent import DQNAgent
 from ultimo_marl.agents.heuristic_agent import RuleBasedHeuristicAgent
 from ultimo_marl.agents.random_agent import RandomAgent
 from ultimo_marl.agents.tournament import (
@@ -11,6 +12,7 @@ from ultimo_marl.agents.tournament import (
 
 __all__ = [
     "BaseAgent",
+    "DQNAgent",
     "RandomAgent",
     "RuleBasedHeuristicAgent",
     "Tournament",
