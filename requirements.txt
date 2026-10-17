@@ -1,0 +1,8 @@
+# Core Ultimo-MARL Dependencies
+torch>=2.2.0
+numpy>=1.26.0
+gymnasium>=0.29.0
+pettingzoo>=1.24.0
+tensorboard>=2.15.0
+matplotlib>=3.8.0
+pandas>=2.1.0

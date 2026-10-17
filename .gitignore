@@ -30,6 +30,13 @@ env/
 ENV/
 .venv/
 
+# Testing & Quality Assurance
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
 # Model checkpoints and weights
 *.pt
 *.pth
@@ -43,5 +50,5 @@ runs/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Environment variables
+# Environment variables & secrets
 .env
