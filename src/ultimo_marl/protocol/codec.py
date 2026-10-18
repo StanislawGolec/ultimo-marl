@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from ultimo_marl.domain.card import Card, CardColor, CardValue
 from ultimo_marl.protocol.events import (
+    CatchUltimo,
+    ChallengeResult,
+    ChallengeWildFour,
     Chat,
     ChatBroadcast,
     ClientCommand,
@@ -27,10 +30,15 @@ from ultimo_marl.protocol.events import (
     Pong,
     ProtocolException,
     RoomStatus,
+    RoundOver,
     ServerEvent,
+    ServerShutdown,
     Start,
     TopCard,
     TurnAnnounced,
+    Ultimo,
+    UltimoDeclared,
+    UltimoPenalty,
     Welcome,
 )
 
@@ -143,8 +151,8 @@ class ProtocolCodec:
     def encode_command(command: ClientCommand) -> str:
         """Serialize a ClientCommand into a wire-format string terminated by '\\n'."""
         match command:
-            case Join(username=uname):
-                return f"JOIN {uname}\n"
+            case Join(username=uname, room_id=rid):
+                return f"JOIN {uname} {rid}\n" if rid else f"JOIN {uname}\n"
             case Play(cards=cards, chosen_wild_color=wild_color):
                 cards_str = ",".join(ProtocolCodec.format_card(c) for c in cards)
                 has_wild = any(c.is_wild for c in cards)
@@ -161,6 +169,12 @@ class ProtocolCodec:
                 return "PING\n"
             case Start():
                 return "START\n"
+            case Ultimo():
+                return "ULTIMO\n"
+            case CatchUltimo(target_username=tgt):
+                return f"CATCH_ULTIMO {tgt}\n"
+            case ChallengeWildFour():
+                return "CHALLENGE_WILD_FOUR\n"
             case _:
                 raise ProtocolException(f"Unsupported client command type: {type(command)}")
 
@@ -177,11 +191,12 @@ class ProtocolCodec:
         try:
             if command_name == CommandType.JOIN.value:
                 if len(parts) < 2:
-                    raise ProtocolException("JOIN command requires a username: JOIN <username>")
-                username = line[line.index(" ") + 1 :].strip()
-                if not username:
-                    raise ProtocolException("Username cannot be empty")
-                return Join(username=username)
+                    raise ProtocolException(
+                        "JOIN command requires a username: JOIN <username> [room_id]"
+                    )
+                username = parts[1]
+                room_id = parts[2] if len(parts) > 2 else None
+                return Join(username=username, room_id=room_id)
 
             if command_name == CommandType.PLAY.value:
                 if len(parts) < 2:
@@ -237,6 +252,19 @@ class ProtocolCodec:
             if command_name == CommandType.START.value:
                 return Start()
 
+            if command_name == CommandType.ULTIMO.value:
+                return Ultimo()
+
+            if command_name == CommandType.CATCH_ULTIMO.value:
+                if len(parts) < 2:
+                    raise ProtocolException(
+                        "CATCH_ULTIMO requires target username: CATCH_ULTIMO <username>"
+                    )
+                return CatchUltimo(target_username=parts[1])
+
+            if command_name == CommandType.CHALLENGE_WILD_FOUR.value:
+                return ChallengeWildFour()
+
             raise ProtocolException(f"Unknown command: '{command_name}'")
 
         except ProtocolException:
@@ -283,6 +311,34 @@ class ProtocolCodec:
                 return f"GAME_OVER {w}\n"
             case Pong():
                 return "PONG\n"
+            case ServerShutdown(drain_seconds=drain):
+                return f"SERVER_SHUTDOWN {drain}\n"
+            case UltimoDeclared(player_name=pname):
+                return f"ULTIMO_DECLARED {pname}\n"
+            case UltimoPenalty(
+                penalized_player=penalized,
+                challenger=challenger,
+                penalty_cards=cards_cnt,
+            ):
+                return f"ULTIMO_PENALTY {penalized} {challenger} {cards_cnt}\n"
+            case ChallengeResult(
+                challenger=challenger,
+                offender=offender,
+                is_guilty=guilty,
+                penalized_player=penalized,
+                penalty_cards=cards_cnt,
+            ):
+                g_str = "GUILTY" if guilty else "INNOCENT"
+                return f"CHALLENGE_RESULT {challenger} {offender} {g_str} {penalized} {cards_cnt}\n"
+            case RoundOver(
+                round_winner=winner,
+                points_earned=pts,
+                is_tournament_won=won,
+                tournament_scores=scores,
+            ):
+                w_str = "WON" if won else "ONGOING"
+                s_str = ",".join(f"{k}:{v}" for k, v in scores.items()) if scores else "-"
+                return f"ROUND_OVER {winner} {pts} {w_str} {s_str}\n"
             case _:
                 raise ProtocolException(f"Unsupported server event type: {type(event)}")
 
@@ -364,6 +420,54 @@ class ProtocolCodec:
 
             if event_name == EventType.PONG.value:
                 return Pong()
+
+            if event_name == EventType.SERVER_SHUTDOWN.value:
+                drain = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
+                return ServerShutdown(drain_seconds=drain)
+
+            if event_name == EventType.ULTIMO_DECLARED.value:
+                if len(parts) < 2:
+                    raise ProtocolException(f"Malformed ULTIMO_DECLARED event: '{line}'")
+                return UltimoDeclared(player_name=parts[1])
+
+            if event_name == EventType.ULTIMO_PENALTY.value:
+                if len(parts) < 4:
+                    raise ProtocolException(f"Malformed ULTIMO_PENALTY event: '{line}'")
+                return UltimoPenalty(
+                    penalized_player=parts[1],
+                    challenger=parts[2],
+                    penalty_cards=int(parts[3]),
+                )
+
+            if event_name == EventType.CHALLENGE_RESULT.value:
+                if len(parts) < 6:
+                    raise ProtocolException(f"Malformed CHALLENGE_RESULT event: '{line}'")
+                return ChallengeResult(
+                    challenger=parts[1],
+                    offender=parts[2],
+                    is_guilty=(parts[3].upper() == "GUILTY"),
+                    penalized_player=parts[4],
+                    penalty_cards=int(parts[5]),
+                )
+
+            if event_name == EventType.ROUND_OVER.value:
+                if len(parts) < 4:
+                    raise ProtocolException(f"Malformed ROUND_OVER event: '{line}'")
+                winner = parts[1]
+                points = int(parts[2])
+                won = parts[3].upper() == "WON"
+                scores: dict[str, int] = {}
+                if len(parts) > 4 and parts[4] != "-":
+                    for pair in parts[4].split(","):
+                        kv = pair.split(":")
+                        if len(kv) == 2:
+                            scores[kv[0]] = int(kv[1])
+                return RoundOver(
+                    round_winner=winner,
+                    points_earned=points,
+                    is_tournament_won=won,
+                    tournament_scores=scores,
+                )
 
             raise ProtocolException(f"Unknown server event: '{event_name}'")
 

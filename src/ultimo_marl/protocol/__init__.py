@@ -3,6 +3,9 @@
 from ultimo_marl.protocol.client import TcpGameClient
 from ultimo_marl.protocol.codec import ProtocolCodec
 from ultimo_marl.protocol.events import (
+    CatchUltimo,
+    ChallengeResult,
+    ChallengeWildFour,
     Chat,
     ChatBroadcast,
     ClientCommand,
@@ -22,14 +25,22 @@ from ultimo_marl.protocol.events import (
     ProtocolError,
     ProtocolException,
     RoomStatus,
+    RoundOver,
     ServerEvent,
+    ServerShutdown,
     Start,
     TopCard,
     TurnAnnounced,
+    Ultimo,
+    UltimoDeclared,
+    UltimoPenalty,
     Welcome,
 )
 
 __all__ = [
+    "CatchUltimo",
+    "ChallengeResult",
+    "ChallengeWildFour",
     "Chat",
     "ChatBroadcast",
     "ClientCommand",
@@ -50,10 +61,15 @@ __all__ = [
     "ProtocolError",
     "ProtocolException",
     "RoomStatus",
+    "RoundOver",
     "ServerEvent",
+    "ServerShutdown",
     "Start",
     "TcpGameClient",
     "TopCard",
     "TurnAnnounced",
+    "Ultimo",
+    "UltimoDeclared",
+    "UltimoPenalty",
     "Welcome",
 ]

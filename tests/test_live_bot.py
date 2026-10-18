@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -20,6 +21,7 @@ from ultimo_marl.protocol.client import TcpGameClient
 from ultimo_marl.protocol.events import (
     DrawResult,
     ErrorEvent,
+    EventType,
     GameOver,
     HandUpdate,
     Join,
@@ -27,6 +29,8 @@ from ultimo_marl.protocol.events import (
     Pass,
     Play,
     RoomStatus,
+    ServerEvent,
+    ServerShutdown,
     Start,
     TopCard,
     TurnAnnounced,
@@ -416,6 +420,8 @@ def test_run_live_bot_cli_parse_args(monkeypatch: pytest.MonkeyPatch) -> None:
         "9000",
         "--name",
         "TestRunnerBot",
+        "--room",
+        "tournament_room_alpha",
         "--strategy",
         "heuristic",
         "--single-game",
@@ -426,5 +432,77 @@ def test_run_live_bot_cli_parse_args(monkeypatch: pytest.MonkeyPatch) -> None:
     assert parsed.host == "10.0.0.1"
     assert parsed.port == 9000
     assert parsed.name == "TestRunnerBot"
+    assert parsed.room == "tournament_room_alpha"
     assert parsed.strategy == "heuristic"
     assert parsed.single_game is True
+
+    from ultimo_marl.bot import run_live_bot as bot_runner
+
+    parsed_mod = bot_runner.parse_args()
+    assert parsed_mod.room == "tournament_room_alpha"
+
+    # Test main() failure exit code 1
+    def mock_connect_fail(self: Any) -> None:
+        raise ConnectionError("Mock fail")
+
+    monkeypatch.setattr("ultimo_marl.bot.run_live_bot.TcpGameClient.connect", mock_connect_fail)
+    assert bot_runner.main() == 1
+
+
+def test_live_bot_server_shutdown_handling() -> None:
+    """Test LiveBot clean disconnection and loop exit upon ServerShutdown event."""
+    server = MockGameServer()
+    try:
+        client = TcpGameClient(host=server.host, port=server.port)
+        agent = RandomAgent()
+        bot = LiveBot(client=client, agent=agent, bot_name="ShutdownBot")
+        client.connect()
+
+        # Send SERVER_SHUTDOWN event from server
+        server.send_line("SERVER_SHUTDOWN 3\n")
+        time.sleep(0.1)
+
+        # Run bot; it should receive SERVER_SHUTDOWN and exit cleanly
+        bot.run()
+        assert not bot.is_running
+        assert not client.is_connected
+    finally:
+        server.close()
+
+
+def test_run_live_bot_server_shutdown_exit() -> None:
+    """Test run_live_bot ServerShutdown handler triggers clean disconnect and exit 0."""
+    server = MockGameServer()
+    try:
+        client = TcpGameClient(host=server.host, port=server.port)
+        agent = RandomAgent()
+        bot = LiveBot(client=client, agent=agent, bot_name="ExitBot")
+        client.connect()
+
+        exited = False
+
+        def mock_exit(code: int) -> None:
+            nonlocal exited
+            exited = code == 0
+
+        import sys
+
+        old_exit = sys.exit
+        sys.exit = mock_exit  # type: ignore[assignment]
+        try:
+
+            def shutdown_handler(event: ServerEvent) -> None:
+                if isinstance(event, ServerShutdown):
+                    bot.stop()
+                    client.disconnect()
+                    sys.exit(0)
+
+            client.register_handler(EventType.SERVER_SHUTDOWN, shutdown_handler)
+            server.send_line("SERVER_SHUTDOWN 5\n")
+            time.sleep(0.15)
+            assert exited is True
+            assert not client.is_connected
+        finally:
+            sys.exit = old_exit
+    finally:
+        server.close()

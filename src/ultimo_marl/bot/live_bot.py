@@ -21,6 +21,7 @@ from ultimo_marl.protocol.events import (
     Play,
     RoomStatus,
     ServerEvent,
+    ServerShutdown,
     Start,
     TurnAnnounced,
 )
@@ -88,6 +89,14 @@ class LiveBot:
                 event.winner_name,
                 self.avg_decision_latency_ms,
             )
+
+        if isinstance(event, ServerShutdown):
+            logger.warning(
+                "Server is performing graceful shutdown (%ds drain). Disconnecting cleanly.",
+                event.drain_seconds,
+            )
+            self.stop()
+            self.client.disconnect()
 
         return None
 
@@ -188,6 +197,9 @@ class LiveBot:
 
             if isinstance(event, GameOver) and stop_on_game_over:
                 logger.info("Game over encountered with stop_on_game_over=True, stopping bot")
+                break
+
+            if isinstance(event, ServerShutdown):
                 break
 
         self.is_running = False

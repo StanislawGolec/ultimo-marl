@@ -12,6 +12,9 @@ from ultimo_marl.domain.card import Card, CardColor, CardValue
 from ultimo_marl.protocol.client import TcpGameClient
 from ultimo_marl.protocol.codec import ProtocolCodec
 from ultimo_marl.protocol.events import (
+    CatchUltimo,
+    ChallengeResult,
+    ChallengeWildFour,
     Chat,
     ChatBroadcast,
     ClientCommand,
@@ -30,10 +33,15 @@ from ultimo_marl.protocol.events import (
     Pong,
     ProtocolException,
     RoomStatus,
+    RoundOver,
     ServerEvent,
+    ServerShutdown,
     Start,
     TopCard,
     TurnAnnounced,
+    Ultimo,
+    UltimoDeclared,
+    UltimoPenalty,
     Welcome,
 )
 
@@ -521,12 +529,16 @@ def test_command_and_event_type_properties() -> None:
 
     commands = [
         (Join("test"), CommandType.JOIN),
+        (Join("test", "room-1"), CommandType.JOIN),
         (Play([]), CommandType.PLAY),
         (Draw(), CommandType.DRAW),
         (Pass(), CommandType.PASS),
         (Chat("msg"), CommandType.CHAT),
         (Ping(), CommandType.PING),
         (Start(), CommandType.START),
+        (Ultimo(), CommandType.ULTIMO),
+        (CatchUltimo("target"), CommandType.CATCH_ULTIMO),
+        (ChallengeWildFour(), CommandType.CHALLENGE_WILD_FOUR),
     ]
     for cmd, expected_cmd_type in commands:
         assert cmd.command_type == expected_cmd_type
@@ -543,6 +555,130 @@ def test_command_and_event_type_properties() -> None:
         (ChatBroadcast("p", "m"), EventType.CHAT_BROADCAST),
         (GameOver("p"), EventType.GAME_OVER),
         (Pong(), EventType.PONG),
+        (ServerShutdown(drain_seconds=5), EventType.SERVER_SHUTDOWN),
+        (UltimoDeclared("p"), EventType.ULTIMO_DECLARED),
+        (UltimoPenalty("p", "challenger", 2), EventType.ULTIMO_PENALTY),
+        (ChallengeResult("challenger", "p", True, "p", 4), EventType.CHALLENGE_RESULT),
+        (RoundOver("p", 50, True, {"p": 500}), EventType.ROUND_OVER),
     ]
     for ev, expected_ev_type in events:
         assert ev.event_type == expected_ev_type
+
+
+def test_join_with_optional_room_id_codec() -> None:
+    """Test Join encoding and decoding with and without room_id."""
+    # Without room_id
+    join_simple = Join(username="Alice")
+    assert ProtocolCodec.encode_command(join_simple) == "JOIN Alice\n"
+    decoded_simple = ProtocolCodec.decode_command("JOIN Alice\n")
+    assert isinstance(decoded_simple, Join)
+    assert decoded_simple.username == "Alice"
+    assert decoded_simple.room_id is None
+
+    # With room_id
+    join_room = Join(username="Alice", room_id="tournament_room_42")
+    assert ProtocolCodec.encode_command(join_room) == "JOIN Alice tournament_room_42\n"
+    decoded_room = ProtocolCodec.decode_command("JOIN Alice tournament_room_42\n")
+    assert isinstance(decoded_room, Join)
+    assert decoded_room.username == "Alice"
+    assert decoded_room.room_id == "tournament_room_42"
+
+
+def test_tournament_commands_codec() -> None:
+    """Test Ultimo, CatchUltimo, ChallengeWildFour encoding and decoding."""
+    # ULTIMO
+    cmd_ultimo = Ultimo()
+    assert ProtocolCodec.encode_command(cmd_ultimo) == "ULTIMO\n"
+    assert ProtocolCodec.decode_command("ULTIMO\n") == cmd_ultimo
+
+    # CATCH_ULTIMO
+    cmd_catch = CatchUltimo(target_username="Charlie")
+    assert ProtocolCodec.encode_command(cmd_catch) == "CATCH_ULTIMO Charlie\n"
+    assert ProtocolCodec.decode_command("CATCH_ULTIMO Charlie\n") == cmd_catch
+
+    with pytest.raises(ProtocolException, match="CATCH_ULTIMO requires target username"):
+        ProtocolCodec.decode_command("CATCH_ULTIMO\n")
+
+    # CHALLENGE_WILD_FOUR
+    cmd_challenge = ChallengeWildFour()
+    assert ProtocolCodec.encode_command(cmd_challenge) == "CHALLENGE_WILD_FOUR\n"
+    assert ProtocolCodec.decode_command("CHALLENGE_WILD_FOUR\n") == cmd_challenge
+
+
+def test_missing_server_events_codec() -> None:
+    """Test ServerShutdown, UltimoDeclared, UltimoPenalty, ChallengeResult, RoundOver."""
+    # ServerShutdown with explicit drain
+    shutdown_ev = ServerShutdown(drain_seconds=10)
+    assert ProtocolCodec.encode_event(shutdown_ev) == "SERVER_SHUTDOWN 10\n"
+    assert ProtocolCodec.decode_event("SERVER_SHUTDOWN 10\n") == shutdown_ev
+
+    # ServerShutdown with default drain fallback
+    assert ProtocolCodec.decode_event("SERVER_SHUTDOWN\n") == ServerShutdown(drain_seconds=5)
+
+    # UltimoDeclared
+    ultimo_dec = UltimoDeclared(player_name="Bob")
+    assert ProtocolCodec.encode_event(ultimo_dec) == "ULTIMO_DECLARED Bob\n"
+    assert ProtocolCodec.decode_event("ULTIMO_DECLARED Bob\n") == ultimo_dec
+
+    with pytest.raises(ProtocolException, match="Malformed ULTIMO_DECLARED"):
+        ProtocolCodec.decode_event("ULTIMO_DECLARED\n")
+
+    # UltimoPenalty
+    penalty_ev = UltimoPenalty(penalized_player="Bob", challenger="Alice", penalty_cards=2)
+    assert ProtocolCodec.encode_event(penalty_ev) == "ULTIMO_PENALTY Bob Alice 2\n"
+    assert ProtocolCodec.decode_event("ULTIMO_PENALTY Bob Alice 2\n") == penalty_ev
+
+    with pytest.raises(ProtocolException, match="Malformed ULTIMO_PENALTY"):
+        ProtocolCodec.decode_event("ULTIMO_PENALTY Bob Alice\n")
+
+    # ChallengeResult (Guilty)
+    res_guilty = ChallengeResult(
+        challenger="Alice",
+        offender="Bob",
+        is_guilty=True,
+        penalized_player="Bob",
+        penalty_cards=4,
+    )
+    assert ProtocolCodec.encode_event(res_guilty) == "CHALLENGE_RESULT Alice Bob GUILTY Bob 4\n"
+    assert ProtocolCodec.decode_event("CHALLENGE_RESULT Alice Bob GUILTY Bob 4\n") == res_guilty
+
+    # ChallengeResult (Innocent)
+    res_innocent = ChallengeResult(
+        challenger="Alice",
+        offender="Bob",
+        is_guilty=False,
+        penalized_player="Alice",
+        penalty_cards=6,
+    )
+    assert (
+        ProtocolCodec.encode_event(res_innocent) == "CHALLENGE_RESULT Alice Bob INNOCENT Alice 6\n"
+    )
+    assert (
+        ProtocolCodec.decode_event("CHALLENGE_RESULT Alice Bob INNOCENT Alice 6\n") == res_innocent
+    )
+
+    with pytest.raises(ProtocolException, match="Malformed CHALLENGE_RESULT"):
+        ProtocolCodec.decode_event("CHALLENGE_RESULT Alice Bob GUILTY Bob\n")
+
+    # RoundOver (with scores, tournament won)
+    round_won = RoundOver(
+        round_winner="Alice",
+        points_earned=120,
+        is_tournament_won=True,
+        tournament_scores={"Alice": 520, "Bob": 340},
+    )
+    assert ProtocolCodec.encode_event(round_won) == "ROUND_OVER Alice 120 WON Alice:520,Bob:340\n"
+    assert ProtocolCodec.decode_event("ROUND_OVER Alice 120 WON Alice:520,Bob:340\n") == round_won
+
+    # RoundOver (ongoing, empty scores)
+    round_ongoing = RoundOver(
+        round_winner="Bob",
+        points_earned=45,
+        is_tournament_won=False,
+        tournament_scores={},
+    )
+    assert ProtocolCodec.encode_event(round_ongoing) == "ROUND_OVER Bob 45 ONGOING -\n"
+    assert ProtocolCodec.decode_event("ROUND_OVER Bob 45 ONGOING -\n") == round_ongoing
+
+    with pytest.raises(ProtocolException, match="Malformed ROUND_OVER"):
+        ProtocolCodec.decode_event("ROUND_OVER Alice 50\n")

@@ -25,6 +25,9 @@ class CommandType(StrEnum):
     CHAT = "CHAT"
     PING = "PING"
     START = "START"
+    ULTIMO = "ULTIMO"
+    CATCH_ULTIMO = "CATCH_ULTIMO"
+    CHALLENGE_WILD_FOUR = "CHALLENGE_WILD_FOUR"
 
 
 class EventType(StrEnum):
@@ -41,6 +44,11 @@ class EventType(StrEnum):
     CHAT_BROADCAST = "CHAT_BROADCAST"
     GAME_OVER = "GAME_OVER"
     PONG = "PONG"
+    SERVER_SHUTDOWN = "SERVER_SHUTDOWN"
+    ULTIMO_DECLARED = "ULTIMO_DECLARED"
+    ULTIMO_PENALTY = "ULTIMO_PENALTY"
+    CHALLENGE_RESULT = "CHALLENGE_RESULT"
+    ROUND_OVER = "ROUND_OVER"
 
 
 # ============================================================================
@@ -59,9 +67,10 @@ class ClientCommand:
 
 @dataclass(frozen=True)
 class Join(ClientCommand):
-    """Register player in room."""
+    """Register player in room, optionally specifying target room ID."""
 
     username: str
+    room_id: str | None = None
 
     @property
     def command_type(self) -> CommandType:
@@ -129,6 +138,35 @@ class Start(ClientCommand):
     @property
     def command_type(self) -> CommandType:
         return CommandType.START
+
+
+@dataclass(frozen=True)
+class Ultimo(ClientCommand):
+    """Declare 'Ultimo!' when holding one card."""
+
+    @property
+    def command_type(self) -> CommandType:
+        return CommandType.ULTIMO
+
+
+@dataclass(frozen=True)
+class CatchUltimo(ClientCommand):
+    """Catch an opponent who failed to declare 'Ultimo!'."""
+
+    target_username: str
+
+    @property
+    def command_type(self) -> CommandType:
+        return CommandType.CATCH_ULTIMO
+
+
+@dataclass(frozen=True)
+class ChallengeWildFour(ClientCommand):
+    """Challenge whether a played Wild Draw Four card was legally played."""
+
+    @property
+    def command_type(self) -> CommandType:
+        return CommandType.CHALLENGE_WILD_FOUR
 
 
 # ============================================================================
@@ -269,3 +307,67 @@ class Pong(ServerEvent):
     @property
     def event_type(self) -> EventType:
         return EventType.PONG
+
+
+@dataclass(frozen=True)
+class ServerShutdown(ServerEvent):
+    """Server notifies clients that graceful shutdown / draining has initiated."""
+
+    drain_seconds: int = 5
+
+    @property
+    def event_type(self) -> EventType:
+        return EventType.SERVER_SHUTDOWN
+
+
+@dataclass(frozen=True)
+class UltimoDeclared(ServerEvent):
+    """Broadcast indicating a player declared 'Ultimo!'."""
+
+    player_name: str
+
+    @property
+    def event_type(self) -> EventType:
+        return EventType.ULTIMO_DECLARED
+
+
+@dataclass(frozen=True)
+class UltimoPenalty(ServerEvent):
+    """Broadcast indicating a player was penalized for failing to declare 'Ultimo!'."""
+
+    penalized_player: str
+    challenger: str
+    penalty_cards: int
+
+    @property
+    def event_type(self) -> EventType:
+        return EventType.ULTIMO_PENALTY
+
+
+@dataclass(frozen=True)
+class ChallengeResult(ServerEvent):
+    """Broadcast resolution of a Wild Draw Four challenge."""
+
+    challenger: str
+    offender: str
+    is_guilty: bool
+    penalized_player: str
+    penalty_cards: int
+
+    @property
+    def event_type(self) -> EventType:
+        return EventType.CHALLENGE_RESULT
+
+
+@dataclass(frozen=True)
+class RoundOver(ServerEvent):
+    """Broadcast indicating a single tournament round concluded."""
+
+    round_winner: str
+    points_earned: int
+    is_tournament_won: bool
+    tournament_scores: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def event_type(self) -> EventType:
+        return EventType.ROUND_OVER

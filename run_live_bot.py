@@ -10,7 +10,13 @@ import sys
 from typing import Any
 
 from ultimo_marl.bot import LiveBot, create_bot_agent
-from ultimo_marl.protocol import Join, TcpGameClient
+from ultimo_marl.protocol import (
+    EventType,
+    Join,
+    ServerEvent,
+    ServerShutdown,
+    TcpGameClient,
+)
 
 logger = logging.getLogger("ultimo_bot")
 
@@ -37,6 +43,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="DeepUltimo_v1",
         help="Bot username to register with server (default: DeepUltimo_v1)",
+    )
+    parser.add_argument(
+        "--room",
+        type=str,
+        default=None,
+        help="Target room ID to join (default: None)",
     )
     parser.add_argument(
         "--model-path",
@@ -104,10 +116,23 @@ def main() -> int:
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    # Register ServerShutdown handler to cleanly disconnect and exit code 0
+    def shutdown_handler(event: ServerEvent) -> None:
+        if isinstance(event, ServerShutdown):
+            logger.warning(
+                "Server is performing graceful shutdown (%ds drain). Disconnecting cleanly.",
+                event.drain_seconds,
+            )
+            bot.stop()
+            client.disconnect()
+            sys.exit(0)
+
+    client.register_handler(EventType.SERVER_SHUTDOWN, shutdown_handler)
+
     try:
         client.connect()
         logger.info("Registering bot username '%s' with server...", args.name)
-        client.send_command(Join(username=args.name))
+        client.send_command(Join(username=args.name, room_id=args.room))
         bot.run(stop_on_game_over=args.single_game)
     except ConnectionError as err:
         logger.error("Connection failed: %s", err)
