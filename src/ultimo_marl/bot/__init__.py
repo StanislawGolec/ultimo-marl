@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING
 from ultimo_marl.agents.base import BaseAgent
 from ultimo_marl.agents.heuristic_agent import RuleBasedHeuristicAgent
 from ultimo_marl.agents.random_agent import RandomAgent
-from ultimo_marl.bot.live_bot import LiveBot
+from ultimo_marl.bot.live_bot import (
+    USERNAME_REGEX,
+    LiveBot,
+    generate_fallback_name,
+    validate_bot_username,
+)
 from ultimo_marl.bot.live_game_state import LiveGameState
 
 if TYPE_CHECKING:
@@ -47,7 +52,10 @@ def create_bot_agent(
 
 
 __all__ = [
+    "USERNAME_REGEX",
     "LiveBot",
     "LiveGameState",
     "create_bot_agent",
+    "generate_fallback_name",
+    "validate_bot_username",
 ]

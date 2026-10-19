@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 from ultimo_marl.domain.card import Card, CardColor
 
@@ -28,6 +29,10 @@ class CommandType(StrEnum):
     ULTIMO = "ULTIMO"
     CATCH_ULTIMO = "CATCH_ULTIMO"
     CHALLENGE_WILD_FOUR = "CHALLENGE_WILD_FOUR"
+    CREATE_ROOM = "CREATE_ROOM"
+    LIST_ROOMS = "LIST_ROOMS"
+    KICK = "KICK"
+    TRANSFER_OWNERSHIP = "TRANSFER_OWNERSHIP"
 
 
 class EventType(StrEnum):
@@ -49,6 +54,8 @@ class EventType(StrEnum):
     ULTIMO_PENALTY = "ULTIMO_PENALTY"
     CHALLENGE_RESULT = "CHALLENGE_RESULT"
     ROUND_OVER = "ROUND_OVER"
+    ROOM_LIST = "ROOM_LIST"
+    ROOM_OWNER_CHANGED = "ROOM_OWNER_CHANGED"
 
 
 # ============================================================================
@@ -67,10 +74,12 @@ class ClientCommand:
 
 @dataclass(frozen=True)
 class Join(ClientCommand):
-    """Register player in room, optionally specifying target room ID."""
+    """Register player in room, optionally specifying target room ID, access code, and max players."""
 
     username: str
     room_id: str | None = None
+    access_code: str | None = None
+    max_players: int | None = None
 
     @property
     def command_type(self) -> CommandType:
@@ -167,6 +176,51 @@ class ChallengeWildFour(ClientCommand):
     @property
     def command_type(self) -> CommandType:
         return CommandType.CHALLENGE_WILD_FOUR
+
+
+@dataclass(frozen=True)
+class CreateRoom(ClientCommand):
+    """Create a new public or private game room."""
+
+    name: str
+    is_public: bool = True
+    access_code: str | None = None
+    max_players: int = 4
+
+    @property
+    def command_type(self) -> CommandType:
+        return CommandType.CREATE_ROOM
+
+
+@dataclass(frozen=True)
+class ListRooms(ClientCommand):
+    """Request a list of public active rooms from the server."""
+
+    @property
+    def command_type(self) -> CommandType:
+        return CommandType.LIST_ROOMS
+
+
+@dataclass(frozen=True)
+class Kick(ClientCommand):
+    """Host command to kick a player from the room."""
+
+    target_username: str
+
+    @property
+    def command_type(self) -> CommandType:
+        return CommandType.KICK
+
+
+@dataclass(frozen=True)
+class TransferOwnership(ClientCommand):
+    """Host command to transfer room ownership to another player."""
+
+    target_username: str
+
+    @property
+    def command_type(self) -> CommandType:
+        return CommandType.TRANSFER_OWNERSHIP
 
 
 # ============================================================================
@@ -276,6 +330,10 @@ class ErrorEvent(ServerEvent):
     def event_type(self) -> EventType:
         return EventType.ERROR
 
+    @property
+    def message(self) -> str:
+        return self.error_message
+
 
 @dataclass(frozen=True)
 class ChatBroadcast(ServerEvent):
@@ -371,3 +429,29 @@ class RoundOver(ServerEvent):
     @property
     def event_type(self) -> EventType:
         return EventType.ROUND_OVER
+
+
+@dataclass(frozen=True)
+class RoomList(ServerEvent):
+    """List of available public rooms returned by the server."""
+
+    rooms: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def event_type(self) -> EventType:
+        return EventType.ROOM_LIST
+
+
+@dataclass(frozen=True)
+class RoomOwnerChanged(ServerEvent):
+    """Broadcast indicating room host ownership transferred to a new player."""
+
+    new_owner_username: str
+
+    @property
+    def event_type(self) -> EventType:
+        return EventType.ROOM_OWNER_CHANGED
+
+    @property
+    def new_owner(self) -> str:
+        return self.new_owner_username

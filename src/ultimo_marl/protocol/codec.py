@@ -7,6 +7,8 @@ and strongly-typed domain commands and server events.
 
 from __future__ import annotations
 
+from typing import Any
+
 from ultimo_marl.domain.card import Card, CardColor, CardValue
 from ultimo_marl.protocol.events import (
     CatchUltimo,
@@ -16,6 +18,7 @@ from ultimo_marl.protocol.events import (
     ChatBroadcast,
     ClientCommand,
     CommandType,
+    CreateRoom,
     Draw,
     DrawResult,
     ErrorEvent,
@@ -23,18 +26,23 @@ from ultimo_marl.protocol.events import (
     GameOver,
     HandUpdate,
     Join,
+    Kick,
+    ListRooms,
     OpponentUpdate,
     Pass,
     Ping,
     Play,
     Pong,
     ProtocolException,
+    RoomList,
+    RoomOwnerChanged,
     RoomStatus,
     RoundOver,
     ServerEvent,
     ServerShutdown,
     Start,
     TopCard,
+    TransferOwnership,
     TurnAnnounced,
     Ultimo,
     UltimoDeclared,
@@ -151,8 +159,20 @@ class ProtocolCodec:
     def encode_command(command: ClientCommand) -> str:
         """Serialize a ClientCommand into a wire-format string terminated by '\\n'."""
         match command:
-            case Join(username=uname, room_id=rid):
-                return f"JOIN {uname} {rid}\n" if rid else f"JOIN {uname}\n"
+            case Join(
+                username=uname,
+                room_id=rid,
+                access_code=code,
+                max_players=max_p,
+            ):
+                tokens = ["JOIN", uname]
+                if rid is not None:
+                    tokens.append(rid)
+                if code is not None:
+                    tokens.append(code)
+                if max_p is not None:
+                    tokens.append(str(max_p))
+                return " ".join(tokens) + "\n"
             case Play(cards=cards, chosen_wild_color=wild_color):
                 cards_str = ",".join(ProtocolCodec.format_card(c) for c in cards)
                 has_wild = any(c.is_wild for c in cards)
@@ -175,6 +195,25 @@ class ProtocolCodec:
                 return f"CATCH_ULTIMO {tgt}\n"
             case ChallengeWildFour():
                 return "CHALLENGE_WILD_FOUR\n"
+            case CreateRoom(
+                name=rname,
+                is_public=pub,
+                access_code=code,
+                max_players=max_p,
+            ):
+                visibility = "PUBLIC" if pub else "PRIVATE"
+                tokens = ["CREATE_ROOM", rname, visibility]
+                if code is not None:
+                    tokens.append(code)
+                if max_p is not None:
+                    tokens.append(str(max_p))
+                return " ".join(tokens) + "\n"
+            case ListRooms():
+                return "LIST_ROOMS\n"
+            case Kick(target_username=tgt):
+                return f"KICK {tgt}\n"
+            case TransferOwnership(target_username=tgt):
+                return f"TRANSFER_OWNERSHIP {tgt}\n"
             case _:
                 raise ProtocolException(f"Unsupported client command type: {type(command)}")
 
@@ -192,11 +231,35 @@ class ProtocolCodec:
             if command_name == CommandType.JOIN.value:
                 if len(parts) < 2:
                     raise ProtocolException(
-                        "JOIN command requires a username: JOIN <username> [room_id]"
+                        "JOIN command requires a username: JOIN <username> [room_id] [access_code] [max_players]"
                     )
                 username = parts[1]
-                room_id = parts[2] if len(parts) > 2 else None
-                return Join(username=username, room_id=room_id)
+                room_id: str | None = None
+                access_code: str | None = None
+                max_players: int | None = None
+
+                if len(parts) == 3:
+                    if parts[2].isdigit() and 2 <= int(parts[2]) <= 16:
+                        max_players = int(parts[2])
+                    else:
+                        room_id = parts[2]
+                elif len(parts) == 4:
+                    room_id = parts[2]
+                    if parts[3].isdigit() and 2 <= int(parts[3]) <= 16:
+                        max_players = int(parts[3])
+                    else:
+                        access_code = parts[3]
+                elif len(parts) >= 5:
+                    room_id = parts[2]
+                    access_code = parts[3]
+                    max_players = int(parts[4])
+
+                return Join(
+                    username=username,
+                    room_id=room_id,
+                    access_code=access_code,
+                    max_players=max_players,
+                )
 
             if command_name == CommandType.PLAY.value:
                 if len(parts) < 2:
@@ -265,6 +328,51 @@ class ProtocolCodec:
             if command_name == CommandType.CHALLENGE_WILD_FOUR.value:
                 return ChallengeWildFour()
 
+            if command_name == CommandType.CREATE_ROOM.value:
+                if len(parts) < 3:
+                    raise ProtocolException(
+                        "CREATE_ROOM requires name and visibility: CREATE_ROOM <name> <PUBLIC|PRIVATE> [code] [max]"
+                    )
+                name = parts[1]
+                vis_str = parts[2].upper()
+                if vis_str not in ("PUBLIC", "PRIVATE"):
+                    raise ProtocolException(
+                        f"CREATE_ROOM visibility must be PUBLIC or PRIVATE, got: '{parts[2]}'"
+                    )
+                is_public = vis_str == "PUBLIC"
+                cr_code: str | None = None
+                cr_max = 4
+                rest = parts[3:]
+                if len(rest) == 1:
+                    if rest[0].isdigit() and (is_public or 2 <= int(rest[0]) <= 16):
+                        cr_max = int(rest[0])
+                    else:
+                        cr_code = rest[0]
+                elif len(rest) >= 2:
+                    cr_code = rest[0]
+                    cr_max = int(rest[1])
+                return CreateRoom(
+                    name=name,
+                    is_public=is_public,
+                    access_code=cr_code,
+                    max_players=cr_max,
+                )
+
+            if command_name == CommandType.LIST_ROOMS.value:
+                return ListRooms()
+
+            if command_name == CommandType.KICK.value:
+                if len(parts) < 2:
+                    raise ProtocolException("KICK requires target username: KICK <username>")
+                return Kick(target_username=parts[1])
+
+            if command_name == CommandType.TRANSFER_OWNERSHIP.value:
+                if len(parts) < 2:
+                    raise ProtocolException(
+                        "TRANSFER_OWNERSHIP requires target username: TRANSFER_OWNERSHIP <username>"
+                    )
+                return TransferOwnership(target_username=parts[1])
+
             raise ProtocolException(f"Unknown command: '{command_name}'")
 
         except ProtocolException:
@@ -275,6 +383,52 @@ class ProtocolCodec:
     # ------------------------------------------------------------------------
     # Server Events (Encoding & Decoding)
     # ------------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_room_token(token: str) -> dict[str, Any]:
+        """Parse a single room descriptor token from ROOM_LIST."""
+        segments = token.split(":")
+        if len(segments) >= 4:
+            if "/" in segments[2]:
+                cur_str, max_str = segments[2].split("/", 1)
+                return {
+                    "room_id": segments[0],
+                    "name": segments[1],
+                    "current_players": int(cur_str),
+                    "max_players": int(max_str),
+                    "status": segments[3],
+                }
+            result: dict[str, Any] = {
+                "room_id": segments[0],
+                "name": segments[1],
+                "current_players": int(segments[2]),
+                "max_players": int(segments[3]),
+            }
+            if len(segments) >= 5:
+                result["status"] = segments[4]
+            return result
+        if len(segments) == 3:
+            if "/" in segments[2]:
+                cur_str, max_str = segments[2].split("/", 1)
+                return {
+                    "room_id": segments[0],
+                    "name": segments[1],
+                    "current_players": int(cur_str),
+                    "max_players": int(max_str),
+                }
+            return {
+                "room_id": segments[0],
+                "current_players": int(segments[1]),
+                "max_players": int(segments[2]),
+            }
+        if len(segments) == 2 and "/" in segments[1]:
+            cur_str, max_str = segments[1].split("/", 1)
+            return {
+                "room_id": segments[0],
+                "current_players": int(cur_str),
+                "max_players": int(max_str),
+            }
+        return {"room_id": token}
 
     @staticmethod
     def encode_event(event: ServerEvent) -> str:
@@ -339,6 +493,26 @@ class ProtocolCodec:
                 w_str = "WON" if won else "ONGOING"
                 s_str = ",".join(f"{k}:{v}" for k, v in scores.items()) if scores else "-"
                 return f"ROUND_OVER {winner} {pts} {w_str} {s_str}\n"
+            case RoomList(rooms=rooms):
+                if not rooms:
+                    return "ROOM_LIST 0\n"
+                encoded_rooms: list[str] = []
+                for r in rooms:
+                    rid = str(r.get("room_id", r.get("id", "unknown")))
+                    cur = int(r.get("current_players", 0))
+                    max_p = int(r.get("max_players", 4))
+                    if "status" in r:
+                        rname = str(r.get("name", rid)).replace(":", "_").replace(" ", "_")
+                        status = str(r["status"])
+                        encoded_rooms.append(f"{rid}:{rname}:{cur}/{max_p}:{status}")
+                    elif "name" in r:
+                        rname = str(r["name"]).replace(":", "_").replace(" ", "_")
+                        encoded_rooms.append(f"{rid}:{rname}:{cur}/{max_p}")
+                    else:
+                        encoded_rooms.append(f"{rid}:{cur}/{max_p}")
+                return f"ROOM_LIST {len(rooms)} {' '.join(encoded_rooms)}\n"
+            case RoomOwnerChanged(new_owner_username=new_owner):
+                return f"ROOM_OWNER_CHANGED {new_owner}\n"
             case _:
                 raise ProtocolException(f"Unsupported server event type: {type(event)}")
 
@@ -468,6 +642,24 @@ class ProtocolCodec:
                     is_tournament_won=won,
                     tournament_scores=scores,
                 )
+
+            if event_name == EventType.ROOM_LIST.value:
+                if len(parts) <= 1 or parts[1] == "-":
+                    return RoomList(rooms=[])
+                if parts[1].isdigit():
+                    count = int(parts[1])
+                    if count == 0:
+                        return RoomList(rooms=[])
+                    room_tokens = [t for t in parts[2:] if t != "-"]
+                else:
+                    room_tokens = [t for t in parts[1:] if t != "-"]
+                rooms = [ProtocolCodec._parse_room_token(t) for t in room_tokens]
+                return RoomList(rooms=rooms)
+
+            if event_name == EventType.ROOM_OWNER_CHANGED.value:
+                if len(parts) < 2:
+                    raise ProtocolException(f"Malformed ROOM_OWNER_CHANGED event: '{line}'")
+                return RoomOwnerChanged(new_owner_username=parts[1])
 
             raise ProtocolException(f"Unknown server event: '{event_name}'")
 

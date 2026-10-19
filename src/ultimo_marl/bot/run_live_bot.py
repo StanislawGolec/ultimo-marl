@@ -5,12 +5,21 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import signal
 import sys
 from typing import Any
 
-from ultimo_marl.bot import LiveBot, create_bot_agent
+from ultimo_marl.bot import (
+    USERNAME_REGEX,
+    LiveBot,
+    create_bot_agent,
+    generate_fallback_name,
+    validate_bot_username,
+)
 from ultimo_marl.protocol import (
+    CreateRoom,
+    ErrorEvent,
     EventType,
     Join,
     ServerEvent,
@@ -19,6 +28,14 @@ from ultimo_marl.protocol import (
 )
 
 logger = logging.getLogger("ultimo_bot")
+
+__all__ = [
+    "USERNAME_REGEX",
+    "generate_fallback_name",
+    "main",
+    "parse_args",
+    "validate_bot_username",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,6 +68,30 @@ def parse_args() -> argparse.Namespace:
         help="Target room ID to join (default: None)",
     )
     parser.add_argument(
+        "--access-code",
+        type=str,
+        default=None,
+        help="Access code for joining or creating a private room (default: None)",
+    )
+    parser.add_argument(
+        "--create-room",
+        type=str,
+        default=None,
+        help="Create a new room with the specified name (default: None)",
+    )
+    parser.add_argument(
+        "--public",
+        action="store_true",
+        default=False,
+        help="Make the created room public",
+    )
+    parser.add_argument(
+        "--private",
+        action="store_true",
+        default=False,
+        help="Make the created room private",
+    )
+    parser.add_argument(
         "--model-path",
         type=str,
         default="checkpoints/ultimo_agent_best.pt",
@@ -81,7 +122,10 @@ def parse_args() -> argparse.Namespace:
         default="INFO",
         help="Logging level (default: INFO)",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not re.match(r"^[a-zA-Z0-9_]{2,24}$", args.name):
+        parser.error("Bot username must be 2-24 alphanumeric or underscore characters")
+    return args
 
 
 def main() -> int:
@@ -127,12 +171,39 @@ def main() -> int:
             client.disconnect()
             sys.exit(0)
 
+    def error_handler(event: ServerEvent) -> None:
+        if isinstance(event, ErrorEvent) and "shutting down" in event.error_message.lower():
+            bot.stop()
+            client.disconnect()
+            sys.exit(0)
+
     client.register_handler(EventType.SERVER_SHUTDOWN, shutdown_handler)
+    client.register_handler(EventType.ERROR, error_handler)
 
     try:
         client.connect()
         logger.info("Registering bot username '%s' with server...", args.name)
-        client.send_command(Join(username=args.name, room_id=args.room))
+        if args.create_room:
+            is_public = not args.private
+            bot.state.is_room_owner = True
+            client.send_command(
+                Join(username=args.name, room_id="LOBBY", access_code=args.access_code)
+            )
+            client.send_command(
+                CreateRoom(
+                    name=args.create_room,
+                    is_public=is_public,
+                    access_code=args.access_code,
+                )
+            )
+        else:
+            client.send_command(
+                Join(
+                    username=args.name,
+                    room_id=args.room,
+                    access_code=args.access_code,
+                )
+            )
         bot.run(stop_on_game_over=args.single_game)
     except ConnectionError as err:
         logger.error("Connection failed: %s", err)

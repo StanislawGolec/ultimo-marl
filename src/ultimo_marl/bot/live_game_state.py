@@ -22,6 +22,7 @@ from ultimo_marl.protocol.events import (
     GameOver,
     HandUpdate,
     OpponentUpdate,
+    RoomOwnerChanged,
     RoomStatus,
     ServerEvent,
     TopCard,
@@ -39,6 +40,7 @@ class LiveGameState:
     bot_name: str
     player_id: str | None = None
     room_id: str | None = None
+    is_room_owner: bool = False
     hand: PlayerHand = field(default_factory=PlayerHand)
     top_card: Card | None = None
     active_color: CardColor | None = None
@@ -46,6 +48,8 @@ class LiveGameState:
     player_names: list[str] = field(default_factory=list)
     current_turn_player: str | None = None
     has_drawn_this_turn: bool = False
+    pending_skip_deflection: bool = False
+    pending_draw_penalty: int = 0
     is_game_over: bool = False
     winner: str | None = None
     turn_count: int = 0
@@ -63,9 +67,19 @@ class LiveGameState:
             case RoomStatus(room_id=rid, player_names=names):
                 self.room_id = rid
                 self.player_names = list(names)
+                if names and names[0] == self.bot_name:
+                    self.is_room_owner = True
                 for name in names:
                     if name != self.bot_name and name not in self.opponent_counts:
                         self.opponent_counts[name] = 7  # Standard initial hand size
+
+            case RoomOwnerChanged(new_owner_username=new_owner):
+                self.is_room_owner = new_owner == self.bot_name
+                logger.info(
+                    "Room owner changed to '%s' (is_room_owner=%s)",
+                    new_owner,
+                    self.is_room_owner,
+                )
 
             case HandUpdate(cards=cards):
                 self.hand = PlayerHand(cards)
@@ -164,26 +178,23 @@ class LiveGameState:
         else:
             opp_names = [name for name in self.opponent_counts if name != self.bot_name]
 
-        for i in range(3):
+        for i in range(15):
             if i < len(opp_names):
                 opp_count = self.opponent_counts.get(opp_names[i], 7)
                 obs[offset + i] = min(float(opp_count) / 10.0, 1.0)
             else:
-                obs[offset + i] = 0.7  # Default estimated 7 cards
-        offset += 3
+                obs[offset + i] = 0.0
+        offset += 15
 
-        # 4. Game Dynamics (3 floats)
+        # 4. Game & Defense Dynamics (3 floats)
         # Clockwise direction scalar = 1.0
         obs[offset] = 1.0
         offset += 1
 
-        # Opponent Ultimo warning: any opponent holds <= 1 card
-        any_opp_ultimo = any(cnt <= 1 for cnt in self.opponent_counts.values())
-        obs[offset] = 1.0 if any_opp_ultimo else 0.0
+        obs[offset] = 1.0 if self.pending_skip_deflection else 0.0
         offset += 1
 
-        # Estimated deck remaining ratio
-        obs[offset] = 0.5
+        obs[offset] = min(float(self.pending_draw_penalty) / 16.0, 1.0)
         offset += 1
 
         assert offset == OBSERVATION_DIM, f"Expected {OBSERVATION_DIM} floats, got {offset}"
@@ -195,6 +206,8 @@ class LiveGameState:
             hand=self.hand,
             top_card=self.top_card,
             active_color=self.active_color,
+            pending_skip_deflection=self.pending_skip_deflection,
+            pending_draw_penalty=self.pending_draw_penalty,
         )
 
         # If bot has already drawn a card this turn, it cannot draw again

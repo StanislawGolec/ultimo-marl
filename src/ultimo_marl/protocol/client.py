@@ -13,11 +13,13 @@ from typing import Any
 from ultimo_marl.protocol.codec import ProtocolCodec
 from ultimo_marl.protocol.events import (
     ClientCommand,
+    CreateRoom,
     EventType,
     Join,
     Ping,
     Pong,
     ProtocolException,
+    RoomStatus,
     ServerEvent,
 )
 
@@ -30,7 +32,7 @@ class TcpGameClient:
     Features:
     - Zero-allocation line-delimited stream accumulator splitting on '\\n'.
     - Disables Nagle's algorithm (TCP_NODELAY) for ultra-low latency action dispatch.
-    - Automatic exponential backoff reconnection on socket drops (Agent 08/09 resilience).
+    - Automatic exponential backoff reconnection on socket drops.
     - Thread-safe outbound command queuing and inbound event dispatching.
     - Automatic PING/PONG heartbeat management.
     """
@@ -42,9 +44,9 @@ class TcpGameClient:
         *,
         connect_timeout: float = 5.0,
         auto_reconnect: bool = True,
-        max_reconnect_attempts: int = 5,
-        initial_backoff: float = 0.2,
-        max_backoff: float = 4.0,
+        max_reconnect_attempts: int = 10,
+        initial_backoff: float = 0.5,
+        max_backoff: float = 8.0,
         backoff_multiplier: float = 2.0,
     ) -> None:
         self.host = host
@@ -63,6 +65,10 @@ class TcpGameClient:
         self._event_queue: queue.Queue[ServerEvent] = queue.Queue()
         self._rx_thread: threading.Thread | None = None
 
+        self.last_username: str | None = None
+        self.last_room_id: str | None = None
+        self.last_access_code: str | None = None
+        self.last_max_players: int | None = None
         self._last_join_cmd: Join | None = None
         self._handlers: dict[EventType, list[Callable[[ServerEvent], None]]] = {}
 
@@ -138,7 +144,24 @@ class TcpGameClient:
     def send_command(self, command: ClientCommand) -> None:
         """Encode and transmit a ClientCommand over the TCP wire."""
         if isinstance(command, Join):
-            self._last_join_cmd = command
+            self.last_username = command.username
+            if command.room_id is not None:
+                self.last_room_id = command.room_id
+            if command.access_code is not None:
+                self.last_access_code = command.access_code
+            if command.max_players is not None:
+                self.last_max_players = command.max_players
+            self._last_join_cmd = Join(
+                username=self.last_username,
+                room_id=self.last_room_id,
+                access_code=self.last_access_code,
+                max_players=self.last_max_players,
+            )
+        elif isinstance(command, CreateRoom):
+            if command.access_code is not None:
+                self.last_access_code = command.access_code
+            if command.max_players is not None:
+                self.last_max_players = command.max_players
 
         wire_line = ProtocolCodec.encode_command(command)
         self.send_raw(wire_line)
@@ -232,6 +255,9 @@ class TcpGameClient:
         # Automatic heartbeat handling
         if isinstance(event, Pong):
             logger.debug("Received PONG heartbeat from server")
+        elif isinstance(event, RoomStatus):
+            if self.last_room_id is None or self.last_room_id.upper() in ("LOBBY", "NONE"):
+                self.last_room_id = event.room_id
 
         # Put in FIFO event queue
         self._event_queue.put(event)
@@ -276,8 +302,20 @@ class TcpGameClient:
                 self._connect_socket()
                 logger.info("Successfully reconnected to %s:%d", self.host, self.port)
 
-                # Automatically re-join lobby if previously registered
-                if self._last_join_cmd is not None:
+                # Automatically re-join lobby with cached credentials
+                if self.last_username is not None:
+                    rejoin_cmd = Join(
+                        username=self.last_username,
+                        room_id=self.last_room_id,
+                        access_code=self.last_access_code,
+                        max_players=self.last_max_players,
+                    )
+                    try:
+                        self.send_command(rejoin_cmd)
+                        logger.info("Re-sent JOIN command for %s", rejoin_cmd.username)
+                    except Exception as err:
+                        logger.error("Failed to re-send JOIN command: %s", err)
+                elif self._last_join_cmd is not None:
                     try:
                         self.send_command(self._last_join_cmd)
                         logger.info("Re-sent JOIN command for %s", self._last_join_cmd.username)
