@@ -184,7 +184,9 @@ class LiveBot:
         logger.info("Live bot '%s' loop started", self.bot_name)
 
         turns = 0
-        while self.is_running and self.client.is_connected:
+        while self.is_running and (
+            self.client.is_connected or (self.client.auto_reconnect and self.client._running)
+        ):
             event = self.step(timeout=0.2)
             if event is None:
                 continue

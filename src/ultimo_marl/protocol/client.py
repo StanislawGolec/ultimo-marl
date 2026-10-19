@@ -219,6 +219,7 @@ class TcpGameClient:
                 break
 
         self._connected = False
+        self._running = False
 
     def _process_wire_line(self, line: str) -> None:
         """Decode line into event, manage heartbeats, and notify handlers."""
