@@ -24,6 +24,7 @@ class TurnManager:
         "_current_index",
         "_direction",
         "_num_players",
+        "finished_indices",
         "pending_draw_penalty",
         "pending_skip_deflection",
     )
@@ -36,6 +37,7 @@ class TurnManager:
         self._direction = Direction.CLOCKWISE
         self.pending_skip_deflection: bool = False
         self.pending_draw_penalty: int = 0
+        self.finished_indices: set[int] = set()
 
     @property
     def current_index(self) -> int:
@@ -53,9 +55,22 @@ class TurnManager:
         return self._num_players
 
     @property
+    def active_player_count(self) -> int:
+        """Number of active players currently remaining holding cards."""
+        return self._num_players - len(self.finished_indices)
+
+    def mark_player_finished(self, index: int) -> None:
+        """Mark a player as finished (podium placement claimed)."""
+        self.finished_indices.add(index)
+
+    def is_player_finished(self, index: int) -> bool:
+        """Return True if specified player has finished and exited turn rotation."""
+        return index in self.finished_indices
+
+    @property
     def is_two_player_game(self) -> bool:
-        """Return True if match is a 2-player duel."""
-        return self._num_players == 2
+        """Return True if match is a 2-player duel (or exactly 2 active players remain)."""
+        return self.active_player_count == 2
 
     def peek_next_player(self, steps: int = 1) -> int:
         """Return the player index N steps ahead without advancing the turn."""
@@ -87,7 +102,23 @@ class TurnManager:
         self._current_index = index
 
     def _calculate_index(self, steps: int) -> int:
-        delta = steps * self._direction.value
-        return (
-            self._current_index + (delta % self._num_players) + self._num_players
-        ) % self._num_players
+        if self._num_players == 0:
+            return 0
+        active_count = self.active_player_count
+        if active_count == 0:
+            return self._current_index % self._num_players
+        if active_count == 1:
+            for i in range(self._num_players):
+                if i not in self.finished_indices:
+                    return i
+            return self._current_index % self._num_players
+
+        total = self._num_players
+        step_dir = self._direction.value
+        curr = self._current_index
+        active_steps = 0
+        while active_steps < steps:
+            curr = (curr + step_dir + total) % total
+            if curr not in self.finished_indices:
+                active_steps += 1
+        return curr

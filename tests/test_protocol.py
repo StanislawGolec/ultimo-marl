@@ -26,10 +26,13 @@ from ultimo_marl.protocol.events import (
     GameOver,
     HandUpdate,
     Join,
+    MatchStandings,
     OpponentUpdate,
     Pass,
     Ping,
+    Placement,
     Play,
+    PlayerFinished,
     Pong,
     ProtocolException,
     RoomStatus,
@@ -682,3 +685,39 @@ def test_missing_server_events_codec() -> None:
 
     with pytest.raises(ProtocolException, match="Malformed ROUND_OVER"):
         ProtocolCodec.decode_event("ROUND_OVER Alice 50\n")
+
+
+def test_podium_and_standings_events_codec() -> None:
+    """Verify encoding and decoding of PLAYER_FINISHED and MATCH_STANDINGS events."""
+    # PLAYER_FINISHED
+    pf = PlayerFinished(player_name="Alice", rank=1)
+    pf_wire = ProtocolCodec.encode_event(pf)
+    assert pf_wire == "PLAYER_FINISHED Alice 1\n"
+    decoded_pf = ProtocolCodec.decode_event(pf_wire)
+    assert isinstance(decoded_pf, PlayerFinished)
+    assert decoded_pf.player_name == "Alice"
+    assert decoded_pf.rank == 1
+
+    # MATCH_STANDINGS with placements
+    placements = [
+        Placement(rank=1, player_name="Alice"),
+        Placement(rank=2, player_name="Bob"),
+        Placement(rank=3, player_name="Charlie"),
+        Placement(rank=4, player_name="David"),
+    ]
+    ms = MatchStandings(placements=placements)
+    ms_wire = ProtocolCodec.encode_event(ms)
+    assert ms_wire == "MATCH_STANDINGS 1:Alice 2:Bob 3:Charlie 4:David\n"
+    decoded_ms = ProtocolCodec.decode_event(ms_wire)
+    assert isinstance(decoded_ms, MatchStandings)
+    assert len(decoded_ms.placements) == 4
+    assert decoded_ms.placements[0] == Placement(1, "Alice")
+    assert decoded_ms.placements[3] == Placement(4, "David")
+
+    # MATCH_STANDINGS empty
+    ms_empty = MatchStandings(placements=[])
+    ms_empty_wire = ProtocolCodec.encode_event(ms_empty)
+    assert ms_empty_wire == "MATCH_STANDINGS -\n"
+    decoded_empty = ProtocolCodec.decode_event(ms_empty_wire)
+    assert isinstance(decoded_empty, MatchStandings)
+    assert len(decoded_empty.placements) == 0

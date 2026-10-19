@@ -28,10 +28,13 @@ from ultimo_marl.protocol.events import (
     Join,
     Kick,
     ListRooms,
+    MatchStandings,
     OpponentUpdate,
     Pass,
     Ping,
+    Placement,
     Play,
+    PlayerFinished,
     Pong,
     ProtocolException,
     RoomList,
@@ -513,6 +516,13 @@ class ProtocolCodec:
                 return f"ROOM_LIST {len(rooms)} {' '.join(encoded_rooms)}\n"
             case RoomOwnerChanged(new_owner_username=new_owner):
                 return f"ROOM_OWNER_CHANGED {new_owner}\n"
+            case PlayerFinished(player_name=pname, rank=rank):
+                return f"PLAYER_FINISHED {pname} {rank}\n"
+            case MatchStandings(placements=placements):
+                if not placements:
+                    return "MATCH_STANDINGS -\n"
+                list_str = " ".join(f"{p.rank}:{p.player_name}" for p in placements)
+                return f"MATCH_STANDINGS {list_str}\n"
             case _:
                 raise ProtocolException(f"Unsupported server event type: {type(event)}")
 
@@ -660,6 +670,32 @@ class ProtocolCodec:
                 if len(parts) < 2:
                     raise ProtocolException(f"Malformed ROOM_OWNER_CHANGED event: '{line}'")
                 return RoomOwnerChanged(new_owner_username=parts[1])
+
+            if event_name == EventType.PLAYER_FINISHED.value:
+                if len(parts) < 3:
+                    raise ProtocolException(f"Malformed PLAYER_FINISHED event: '{line}'")
+                try:
+                    rank = int(parts[2])
+                except ValueError as ve:
+                    raise ProtocolException(
+                        f"Invalid rank in PLAYER_FINISHED: '{parts[2]}'"
+                    ) from ve
+                return PlayerFinished(player_name=parts[1], rank=rank)
+
+            if event_name == EventType.MATCH_STANDINGS.value:
+                placements: list[Placement] = []
+                if len(parts) > 1 and parts[1] != "-":
+                    for token in parts[1:]:
+                        kv = token.split(":", 1)
+                        if len(kv) == 2:
+                            try:
+                                r = int(kv[0])
+                                placements.append(Placement(rank=r, player_name=kv[1]))
+                            except ValueError as ve:
+                                raise ProtocolException(
+                                    f"Invalid placement rank: '{kv[0]}'"
+                                ) from ve
+                return MatchStandings(placements=placements)
 
             raise ProtocolException(f"Unknown server event: '{event_name}'")
 

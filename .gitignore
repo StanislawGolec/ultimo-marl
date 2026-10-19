@@ -41,6 +41,7 @@ htmlcov/
 # Model checkpoints and weights
 *.pt
 *.pth
+*.ptc
 *.onnx
 checkpoints/
 

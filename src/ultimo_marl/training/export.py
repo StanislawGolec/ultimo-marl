@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from ultimo_marl.env.observation import OBSERVATION_DIM
-
 if TYPE_CHECKING:
     from ultimo_marl.training.q_network import DuelingQNetwork
 
@@ -117,10 +115,61 @@ def export_onnx(
     return path.resolve()
 
 
+def verify_onnx_parity(
+    network: DuelingQNetwork,
+    onnx_path: str | Path,
+    sample_obs: torch.Tensor | None = None,
+    atol: float = 1e-5,
+) -> float:
+    """Verify numerical parity between PyTorch eager forward pass and ONNX Runtime.
+
+    Parameters
+    ----------
+    network : DuelingQNetwork
+        PyTorch network to compare against.
+    onnx_path : str | Path
+        Path to exported .onnx model.
+    sample_obs : torch.Tensor | None
+        Test observation tensor. If None, generated as random float32 tensor of shape (8, obs_dim).
+    atol : float
+        Maximum allowed absolute tolerance (default: 1e-5).
+
+    Returns
+    -------
+    float
+        Maximum absolute delta observed between PyTorch and ONNX Runtime outputs.
+    """
+    import numpy as np
+    import onnxruntime as ort
+
+    network.eval()
+    device = next(network.parameters()).device
+
+    if sample_obs is None:
+        sample_obs = torch.randn(8, network.obs_dim, dtype=torch.float32, device=device)
+    else:
+        sample_obs = sample_obs.to(device)
+
+    with torch.no_grad():
+        pt_out = network(sample_obs).cpu().numpy()
+
+    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    ort_inputs = {session.get_inputs()[0].name: sample_obs.cpu().numpy()}
+    ort_out = session.run(None, ort_inputs)[0]
+
+    max_delta = float(np.max(np.abs(pt_out - ort_out)))
+    if max_delta > atol:
+        raise ValueError(
+            f"ONNX parity violation! Max absolute delta {max_delta:.6e} exceeds tolerance {atol:.6e}"
+        )
+    return max_delta
+
+
 def export_all_artifacts(
     network: DuelingQNetwork,
     export_dir: str | Path,
     base_name: str = "ultimo_agent",
+    verify_parity: bool = True,
 ) -> dict[str, Path]:
     """Export complete production deployment bundle (PyTorch, TorchScript, and ONNX).
 
@@ -132,6 +181,8 @@ def export_all_artifacts(
         Directory where artifacts will be deposited.
     base_name : str
         Prefix for exported files.
+    verify_parity : bool
+        Whether to verify numerical parity with ONNX Runtime (default: True).
 
     Returns
     -------
@@ -141,7 +192,7 @@ def export_all_artifacts(
     dir_path = Path(export_dir)
     dir_path.mkdir(parents=True, exist_ok=True)
 
-    sample_obs = torch.zeros(1, OBSERVATION_DIM, dtype=torch.float32)
+    sample_obs = torch.zeros(1, network.obs_dim, dtype=torch.float32)
 
     # 1. PyTorch checkpoint
     pt_path = dir_path / f"{base_name}.pt"
@@ -160,6 +211,10 @@ def export_all_artifacts(
     # 3. ONNX model
     onnx_path = dir_path / f"{base_name}.onnx"
     export_onnx(network, onnx_path, sample_obs=sample_obs)
+
+    # 4. Verify ONNX numerical parity
+    if verify_parity:
+        verify_onnx_parity(network, onnx_path, sample_obs=sample_obs)
 
     return {
         "pytorch": pt_path.resolve(),

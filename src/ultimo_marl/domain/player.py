@@ -68,6 +68,7 @@ class Player:
     player_id: int
     name: str
     hand: PlayerHand = field(default_factory=PlayerHand)
+    placement_rank: int = 0
 
     @property
     def card_count(self) -> int:
@@ -78,3 +79,8 @@ class Player:
     def is_ultimo(self) -> bool:
         """Return True if player has exactly 1 card remaining ('Ultimo!')."""
         return len(self.hand) == 1
+
+    @property
+    def is_finished(self) -> bool:
+        """Return True if player has emptied their hand and claimed a podium rank."""
+        return self.placement_rank > 0

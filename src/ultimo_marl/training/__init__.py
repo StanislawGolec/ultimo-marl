@@ -4,6 +4,7 @@ from ultimo_marl.training.export import (
     export_all_artifacts,
     export_onnx,
     export_torchscript,
+    verify_onnx_parity,
 )
 from ultimo_marl.training.learner import DDQNLearner
 from ultimo_marl.training.q_network import DuelingQNetwork, mask_q_values
@@ -34,4 +35,5 @@ __all__ = [
     "export_torchscript",
     "generate_training_plots",
     "mask_q_values",
+    "verify_onnx_parity",
 ]

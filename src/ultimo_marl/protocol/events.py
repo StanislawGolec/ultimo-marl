@@ -56,6 +56,8 @@ class EventType(StrEnum):
     ROUND_OVER = "ROUND_OVER"
     ROOM_LIST = "ROOM_LIST"
     ROOM_OWNER_CHANGED = "ROOM_OWNER_CHANGED"
+    PLAYER_FINISHED = "PLAYER_FINISHED"
+    MATCH_STANDINGS = "MATCH_STANDINGS"
 
 
 # ============================================================================
@@ -455,3 +457,34 @@ class RoomOwnerChanged(ServerEvent):
     @property
     def new_owner(self) -> str:
         return self.new_owner_username
+
+
+@dataclass(frozen=True)
+class Placement:
+    """Player finishing rank placement within a match."""
+
+    rank: int
+    player_name: str
+
+
+@dataclass(frozen=True)
+class PlayerFinished(ServerEvent):
+    """Broadcast indicating a player emptied their hand and achieved a podium finish."""
+
+    player_name: str
+    rank: int
+
+    @property
+    def event_type(self) -> EventType:
+        return EventType.PLAYER_FINISHED
+
+
+@dataclass(frozen=True)
+class MatchStandings(ServerEvent):
+    """Final ordered placement rankings for all players in a match."""
+
+    placements: list[Placement] = field(default_factory=list)
+
+    @property
+    def event_type(self) -> EventType:
+        return EventType.MATCH_STANDINGS

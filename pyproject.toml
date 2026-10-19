@@ -103,6 +103,8 @@ module = [
     "tensorboard.*",
     "torch.*",
     "scipy.*",
+    "onnx.*",
+    "onnxruntime.*",
 ]
 ignore_missing_imports = true
 

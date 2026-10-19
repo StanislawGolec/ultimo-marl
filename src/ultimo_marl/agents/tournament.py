@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ultimo_marl.agents.base import BaseAgent
 from ultimo_marl.domain.simulator import UltimoSimulator
@@ -61,22 +61,28 @@ class TournamentResult:
     confidence_intervals: dict[str, tuple[float, float]]
     average_turns: float
     total_scores: dict[str, int]
+    second_place: dict[str, int] = field(default_factory=dict)
+    third_place: dict[str, int] = field(default_factory=dict)
+    podium_finishes: dict[str, int] = field(default_factory=dict)
+    podium_rates: dict[str, float] = field(default_factory=dict)
 
     def summary(self) -> str:
         """Render a formatted markdown table summarizing tournament performance."""
         lines = [
             f"### Tournament Results ({self.games_played:,} games | Avg turns: {self.average_turns:.1f})",
             "",
-            "| Agent | Wins | Win Rate | 95% Wilson Confidence Interval | Total Points |",
-            "| :--- | :--- | :--- | :--- | :--- |",
+            "| Agent | 1st (Wins) | 2nd | 3rd | Podium Rate | 95% Wilson CI | Total Points |",
+            "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
         ]
         for name in self.agent_names:
             w = self.wins.get(name, 0)
-            rate = self.win_rates.get(name, 0.0) * 100.0
+            sec = self.second_place.get(name, 0)
+            thd = self.third_place.get(name, 0)
+            pod_rate = self.podium_rates.get(name, self.win_rates.get(name, 0.0)) * 100.0
             low, high = self.confidence_intervals.get(name, (0.0, 0.0))
             pts = self.total_scores.get(name, 0)
             lines.append(
-                f"| **{name}** | {w:,} | {rate:.1f}% | [{low * 100.0:.1f}%, {high * 100.0:.1f}%] | {pts:,} |"
+                f"| **{name}** | {w:,} | {sec:,} | {thd:,} | {pod_rate:.1f}% | [{low * 100.0:.1f}%, {high * 100.0:.1f}%] | {pts:,} |"
             )
         return "\n".join(lines)
 
@@ -98,13 +104,21 @@ class Tournament:
         self.num_players = len(agents)
         self.max_turns_per_game = max_turns_per_game
 
-    def play(self, num_games: int = 1000, seed: int = 42) -> TournamentResult:
+    def play(
+        self,
+        num_games: int = 1000,
+        seed: int = 42,
+        last_man_standing: bool = True,
+    ) -> TournamentResult:
         """Run tournament simulation and compute statistical metrics."""
         wins = {agent.name: 0 for agent in self.agents}
+        second_place = {agent.name: 0 for agent in self.agents}
+        third_place = {agent.name: 0 for agent in self.agents}
+        podium_finishes = {agent.name: 0 for agent in self.agents}
         total_scores = {agent.name: 0 for agent in self.agents}
         total_turns = 0
 
-        sim = UltimoSimulator(num_players=self.num_players)
+        sim = UltimoSimulator(num_players=self.num_players, last_man_standing=last_man_standing)
 
         for game_idx in range(num_games):
             # Rotate agent seating to prevent position bias
@@ -159,11 +173,25 @@ class Tournament:
 
             total_turns += turn_count
 
-            # Record match outcome
-            if sim.is_game_over and sim.winner_idx is not None:
+            # Record match outcome and podium ranks
+            if last_man_standing and sim.match_standings:
+                for rank, p_idx in sim.match_standings:
+                    agent_name = assigned_agents[p_idx].name
+                    if rank == 1:
+                        wins[agent_name] += 1
+                        podium_finishes[agent_name] += 1
+                    elif rank == 2:
+                        second_place[agent_name] += 1
+                        podium_finishes[agent_name] += 1
+                    elif rank == 3:
+                        third_place[agent_name] += 1
+                        podium_finishes[agent_name] += 1
+            elif sim.is_game_over and sim.winner_idx is not None:
                 winner_agent = assigned_agents[sim.winner_idx]
                 wins[winner_agent.name] += 1
+                podium_finishes[winner_agent.name] += 1
 
+            if sim.is_game_over:
                 scores = sim.calculate_scores()
                 for seat_idx, pts in scores.items():
                     agent_name = assigned_agents[seat_idx].name
@@ -171,6 +199,7 @@ class Tournament:
 
         # Calculate win rates and confidence intervals
         win_rates = {name: wins[name] / num_games for name in wins}
+        podium_rates = {name: podium_finishes[name] / num_games for name in wins}
         confidence_intervals = {name: wilson_score_interval(wins[name], num_games) for name in wins}
         avg_turns = total_turns / num_games if num_games > 0 else 0.0
 
@@ -182,4 +211,8 @@ class Tournament:
             confidence_intervals=confidence_intervals,
             average_turns=avg_turns,
             total_scores=total_scores,
+            second_place=second_place,
+            third_place=third_place,
+            podium_finishes=podium_finishes,
+            podium_rates=podium_rates,
         )

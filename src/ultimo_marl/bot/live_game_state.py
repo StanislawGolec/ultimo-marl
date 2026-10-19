@@ -21,12 +21,17 @@ from ultimo_marl.protocol.events import (
     ErrorEvent,
     GameOver,
     HandUpdate,
+    MatchStandings,
     OpponentUpdate,
+    Placement,
+    PlayerFinished,
     RoomOwnerChanged,
     RoomStatus,
     ServerEvent,
     TopCard,
     TurnAnnounced,
+    UltimoDeclared,
+    UltimoPenalty,
     Welcome,
 )
 
@@ -53,6 +58,16 @@ class LiveGameState:
     is_game_over: bool = False
     winner: str | None = None
     turn_count: int = 0
+    declared_ultimo_players: set[str] = field(default_factory=set)
+    is_finished: bool = False
+    is_spectator: bool = False
+    my_rank: int | None = None
+    standings: list[Placement] = field(default_factory=list)
+
+    @property
+    def opponent_card_counts(self) -> dict[str, int]:
+        """Dictionary of opponent player names to their hand card count."""
+        return self.opponent_counts
 
     def apply_event(self, event: ServerEvent) -> bool:
         """Process an inbound server event and update internal state.
@@ -62,6 +77,8 @@ class LiveGameState:
         match event:
             case Welcome(assigned_player_id=pid):
                 self.player_id = pid
+                if self.bot_name not in self.player_names:
+                    self.player_names.append(self.bot_name)
                 logger.info("Bot registered with server ID: %s", pid)
 
             case RoomStatus(room_id=rid, player_names=names):
@@ -83,7 +100,17 @@ class LiveGameState:
 
             case HandUpdate(cards=cards):
                 self.hand = PlayerHand(cards)
-                logger.debug("Hand updated: %d cards held", len(cards))
+                if self.bot_name not in self.player_names:
+                    self.player_names.append(self.bot_name)
+                if len(cards) == 0 and self.turn_count > 0:
+                    self.is_finished = True
+                    self.is_spectator = True
+                elif len(cards) > 0 and not self.is_finished:
+                    self.is_spectator = False
+                self.has_drawn_this_turn = False
+                logger.debug(
+                    "Hand hydrated: %d cards held (is_spectator=%s)", len(cards), self.is_spectator
+                )
 
             case TopCard(card=c, active_color=color):
                 self.top_card = c
@@ -92,6 +119,10 @@ class LiveGameState:
 
             case OpponentUpdate(opponent_name=oname, card_count=cnt):
                 self.opponent_counts[oname] = cnt
+                if oname not in self.player_names:
+                    self.player_names.append(oname)
+                if cnt > 1:
+                    self.declared_ultimo_players.discard(oname)
                 logger.debug("Opponent '%s' has %d cards", oname, cnt)
 
             case DrawResult(drawn_card=c):
@@ -105,6 +136,9 @@ class LiveGameState:
                 is_my_turn = pname == self.bot_name
                 if is_my_turn:
                     self.has_drawn_this_turn = False
+                    if self.is_spectator or self.is_finished:
+                        logger.info("Bot '%s' is in spectator mode; skipping turn action", pname)
+                        return False
                     logger.info(
                         "Turn announced: Bot '%s' is acting (turn #%d)", pname, self.turn_count
                     )
@@ -115,6 +149,37 @@ class LiveGameState:
                 self.is_game_over = True
                 self.winner = w
                 logger.info("Match concluded! Winner: %s", w)
+
+            case PlayerFinished(player_name=pname, rank=rank):
+                if pname == self.bot_name:
+                    self.is_finished = True
+                    self.is_spectator = True
+                    self.my_rank = rank
+                    logger.info(
+                        "Bot '%s' finished match at rank %d! Entering spectator mode.", pname, rank
+                    )
+                else:
+                    logger.info("Opponent '%s' finished match at rank %d", pname, rank)
+
+            case MatchStandings(placements=placements):
+                self.standings = list(placements)
+                self.is_game_over = True
+                logger.info("MatchStandings received: %s", placements)
+
+            case UltimoDeclared(player_name=pname):
+                self.declared_ultimo_players.add(pname)
+                logger.info("Player '%s' declared ULTIMO!", pname)
+
+            case UltimoPenalty(
+                penalized_player=penalized, challenger=challenger, penalty_cards=cnt
+            ):
+                self.declared_ultimo_players.discard(penalized)
+                logger.info(
+                    "Player '%s' penalized %d cards for missing ULTIMO by '%s'",
+                    penalized,
+                    cnt,
+                    challenger,
+                )
 
             case ErrorEvent(error_message=err):
                 logger.warning("Server error event: %s", err)

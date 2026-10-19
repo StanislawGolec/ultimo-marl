@@ -15,20 +15,27 @@ from ultimo_marl.domain.card import CardColor
 from ultimo_marl.env.action_mapping import ACTION_DRAW, action_id_to_card_and_color
 from ultimo_marl.protocol.client import TcpGameClient
 from ultimo_marl.protocol.events import (
+    CatchUltimo,
     ClientCommand,
     Draw,
     DrawResult,
     ErrorEvent,
     GameOver,
     Join,
+    MatchStandings,
+    OpponentUpdate,
     Pass,
     Play,
+    PlayerFinished,
     RoomOwnerChanged,
     RoomStatus,
     ServerEvent,
     ServerShutdown,
     Start,
     TurnAnnounced,
+    Ultimo,
+    UltimoDeclared,
+    UltimoPenalty,
 )
 
 if TYPE_CHECKING:
@@ -71,6 +78,7 @@ class LiveBot:
         self.is_running = False
         self.total_decisions = 0
         self.cumulative_latency_ms = 0.0
+        self._caught_attempts: set[str] = set()
 
     @property
     def avg_decision_latency_ms(self) -> float:
@@ -82,6 +90,26 @@ class LiveBot:
     def handle_event(self, event: ServerEvent) -> ClientCommand | None:
         """Process an inbound event and return the appropriate reactive command, if any."""
         is_my_turn = self.state.apply_event(event)
+
+        if isinstance(event, OpponentUpdate):
+            if event.card_count != 1:
+                self._caught_attempts.discard(event.opponent_name)
+
+        if isinstance(event, UltimoPenalty):
+            self._caught_attempts.discard(event.penalized_player)
+
+        if isinstance(event, UltimoDeclared):
+            self._caught_attempts.discard(event.player_name)
+
+        if isinstance(event, (GameOver, MatchStandings)):
+            self._caught_attempts.clear()
+
+        if isinstance(event, PlayerFinished):
+            self._caught_attempts.discard(event.player_name)
+
+        # Spectator Mode: suppress turn actions if bot is in spectator mode or finished
+        if self.state.is_spectator or self.state.is_finished:
+            return None
 
         if is_my_turn:
             return self._decide_turn_action()
@@ -181,6 +209,19 @@ class LiveBot:
             return Draw()
 
         self.state.has_drawn_this_turn = False
+
+        # Shout Policy: If len(hand) <= 2 and bot plays a card, dispatch Ultimo() alongside Play
+        if len(self.state.hand) <= 2:
+            logger.info(
+                "Bot '%s' has %d cards; dispatching ULTIMO declaration!",
+                self.bot_name,
+                len(self.state.hand),
+            )
+            try:
+                self.client.send_command(Ultimo())
+            except ConnectionError as err:
+                logger.warning("Failed to dispatch Ultimo shout: %s", err)
+
         return Play(cards=[card], chosen_wild_color=wild_color or CardColor.RED)
 
     def _decide_post_draw_action(self) -> ClientCommand:
@@ -201,6 +242,16 @@ class LiveBot:
                 if card is not None:
                     self.state.has_drawn_this_turn = False
                     logger.info("Playing drawn card %s (chosen color: %s)", card, wild_color)
+                    if len(self.state.hand) <= 2:
+                        logger.info(
+                            "Bot '%s' post-draw hand count is %d; shouting ULTIMO!",
+                            self.bot_name,
+                            len(self.state.hand),
+                        )
+                        try:
+                            self.client.send_command(Ultimo())
+                        except ConnectionError as err:
+                            logger.warning("Failed to dispatch Ultimo shout post-draw: %s", err)
                     return Play(cards=[card], chosen_wild_color=wild_color or CardColor.RED)
 
         # Default to passing turn
@@ -213,16 +264,33 @@ class LiveBot:
         try:
             event = self.client.get_event(timeout=timeout)
         except queue.Empty:
-            return None
+            event = None
 
-        cmd = self.handle_event(event)
-        if cmd is not None:
-            try:
-                self.client.send_command(cmd)
-            except ConnectionError as err:
-                if not self.client.auto_reconnect:
-                    raise
-                logger.warning("Transient disconnect while sending %s: %s", cmd.command_type, err)
+        if event is not None:
+            cmd = self.handle_event(event)
+            if cmd is not None:
+                try:
+                    self.client.send_command(cmd)
+                except ConnectionError as err:
+                    if not self.client.auto_reconnect:
+                        raise
+                    logger.warning(
+                        "Transient disconnect while sending %s: %s", cmd.command_type, err
+                    )
+
+        # Adversarial Catch Policy: Inspect opponent card counts
+        for opponent, count in self.state.opponent_card_counts.items():
+            if (
+                count == 1
+                and opponent not in self.state.declared_ultimo_players
+                and opponent not in self._caught_attempts
+            ):
+                logger.info("Catching opponent '%s' who missed ULTIMO shout!", opponent)
+                self._caught_attempts.add(opponent)
+                try:
+                    self.client.send_command(CatchUltimo(target_username=opponent))
+                except ConnectionError as err:
+                    logger.warning("Failed to dispatch CatchUltimo for '%s': %s", opponent, err)
 
         return event
 
@@ -249,7 +317,7 @@ class LiveBot:
                     logger.info("Reached maximum turn limit (%d), stopping bot", max_turns)
                     break
 
-            if isinstance(event, GameOver) and stop_on_game_over:
+            if isinstance(event, (GameOver, MatchStandings)) and stop_on_game_over:
                 logger.info("Game over encountered with stop_on_game_over=True, stopping bot")
                 break
 

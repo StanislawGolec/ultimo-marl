@@ -67,11 +67,18 @@ class UltimoSimulator:
 
     STARTING_HAND_SIZE: int = 7
 
-    def __init__(self, num_players: int = 4, seed: int | None = None) -> None:
+    def __init__(
+        self,
+        num_players: int = 4,
+        seed: int | None = None,
+        *,
+        last_man_standing: bool = False,
+    ) -> None:
         if num_players < 2 or num_players > 16:
             raise ValueError(f"Player count must be between 2 and 16, got {num_players}")
         self._num_players = num_players
         self._num_decks = 2 if num_players > 8 else 1
+        self._last_man_standing = last_man_standing
         self._rng = random.Random(seed)
         self._players: list[Player] = [
             Player(player_id=i, name=f"Player_{i}") for i in range(num_players)
@@ -83,6 +90,9 @@ class UltimoSimulator:
         self._is_game_over: bool = False
         self._has_drawn_this_turn: bool = False
         self._winner_idx: int | None = None
+        self._finished_players: list[int] = []
+        self._declared_ultimo: set[int] = set()
+        self._pending_ultimo_violator: int | None = None
 
     def reset(self, seed: int | None = None) -> None:
         """Reset and initialize a fresh match."""
@@ -97,6 +107,7 @@ class UltimoSimulator:
         # Clear hands and deal 7 cards each
         for player in self._players:
             player.hand.clear()
+            player.placement_rank = 0
             for _ in range(self.STARTING_HAND_SIZE):
                 card = self._draw_from_deck()
                 if card is not None:
@@ -118,6 +129,9 @@ class UltimoSimulator:
         self._is_game_over = False
         self._has_drawn_this_turn = False
         self._winner_idx = None
+        self._finished_players = []
+        self._declared_ultimo = set()
+        self._pending_ultimo_violator = None
 
         self.assert_card_conservation()
 
@@ -177,6 +191,9 @@ class UltimoSimulator:
                     ordered_cards.insert(0, initiator)
                     break
 
+        # Any move closes the previous catch window
+        self._pending_ultimo_violator = None
+
         # Remove cards from hand and place on discard pile
         for card in ordered_cards:
             player.hand.remove_card(card)
@@ -185,20 +202,69 @@ class UltimoSimulator:
 
         # Check for win condition
         if player.hand.is_empty:
-            self._turn_manager.pending_skip_deflection = False
-            self._turn_manager.pending_draw_penalty = 0
-            self._is_game_over = True
-            self._winner_idx = player_idx
-            if cards_before == expected_cards:
-                self.assert_card_conservation()
-            return PlayResult.successful(
-                cards=ordered_cards,
-                is_ultimo=False,
-                is_game_over=True,
-                winner_idx=player_idx,
-            )
+            if self._last_man_standing:
+                rank = len(self._finished_players) + 1
+                player.placement_rank = rank
+                self._finished_players.append(player_idx)
+                self._turn_manager.mark_player_finished(player_idx)
+
+                if self._winner_idx is None:
+                    self._winner_idx = player_idx
+
+                # Resolve combo action effects onto next active player
+                self._apply_combo_action(ordered_cards)
+                self._has_drawn_this_turn = False
+
+                if self._turn_manager.active_player_count <= 1:
+                    for idx, remaining in enumerate(self._players):
+                        if not remaining.is_finished:
+                            final_rank = len(self._finished_players) + 1
+                            remaining.placement_rank = final_rank
+                            self._finished_players.append(idx)
+                            self._turn_manager.mark_player_finished(idx)
+                            break
+                    self._is_game_over = True
+                    self._turn_manager.pending_skip_deflection = False
+                    self._turn_manager.pending_draw_penalty = 0
+                    if cards_before == expected_cards:
+                        self.assert_card_conservation()
+                    return PlayResult.successful(
+                        cards=ordered_cards,
+                        is_ultimo=False,
+                        is_game_over=True,
+                        winner_idx=self._winner_idx,
+                    )
+                else:
+                    if cards_before == expected_cards:
+                        self.assert_card_conservation()
+                    return PlayResult.successful(
+                        cards=ordered_cards,
+                        is_ultimo=False,
+                        is_game_over=False,
+                        winner_idx=None,
+                    )
+            else:
+                self._turn_manager.pending_skip_deflection = False
+                self._turn_manager.pending_draw_penalty = 0
+                self._is_game_over = True
+                self._winner_idx = player_idx
+                player.placement_rank = 1
+                self._finished_players.append(player_idx)
+                if cards_before == expected_cards:
+                    self.assert_card_conservation()
+                return PlayResult.successful(
+                    cards=ordered_cards,
+                    is_ultimo=False,
+                    is_game_over=True,
+                    winner_idx=player_idx,
+                )
 
         is_ultimo = player.hand.is_ultimo
+        if is_ultimo:
+            if player_idx not in self._declared_ultimo:
+                self._pending_ultimo_violator = player_idx
+        else:
+            self._declared_ultimo.discard(player_idx)
 
         # Resolve card action effects
         self._apply_combo_action(ordered_cards)
@@ -220,6 +286,9 @@ class UltimoSimulator:
             return None
         if player_idx != self._turn_manager.current_index:
             return None
+
+        # Any move closes the previous catch window
+        self._pending_ultimo_violator = None
 
         cards_before = self.total_cards
         expected_cards = 108 * self._num_decks
@@ -426,6 +495,50 @@ class UltimoSimulator:
     def has_drawn_this_turn(self) -> bool:
         """Whether current player has drawn a card this turn."""
         return self._has_drawn_this_turn
+
+    def declare_ultimo(self, player_idx: int) -> bool:
+        """Register that a player declared ULTIMO (called before/alongside playing down to 1 card)."""
+        self._declared_ultimo.add(player_idx)
+        if self._pending_ultimo_violator == player_idx:
+            self._pending_ultimo_violator = None
+        return True
+
+    def catch_ultimo(self, challenger_idx: int, target_idx: int) -> tuple[bool, int]:
+        """Attempt to catch an opponent who failed to declare ULTIMO.
+
+        If target is caught, target draws 6 cards and returns (True, 6).
+        Otherwise returns (False, 0).
+        """
+        if self._pending_ultimo_violator != target_idx:
+            return False, 0
+        target_player = self._players[target_idx]
+        if target_player.card_count != 1 or target_idx in self._declared_ultimo:
+            return False, 0
+
+        self._draw_cards_for(target_idx, 6)
+        self._pending_ultimo_violator = None
+        self._declared_ultimo.discard(target_idx)
+        return True, 6
+
+    @property
+    def pending_ultimo_violator(self) -> int | None:
+        """0-indexed player who currently holds 1 card and failed to declare ULTIMO."""
+        return self._pending_ultimo_violator
+
+    @property
+    def placements(self) -> dict[int, int]:
+        """Mapping from player_id to awarded placement rank (1..N)."""
+        return {p.player_id: p.placement_rank for p in self._players if p.is_finished}
+
+    @property
+    def match_standings(self) -> list[tuple[int, int]]:
+        """List of (rank, player_id) placements in finish order."""
+        return [(self._players[i].placement_rank, i) for i in self._finished_players]
+
+    @property
+    def is_last_man_standing(self) -> bool:
+        """Whether this simulator is configured for Last-Man-Standing continuation."""
+        return self._last_man_standing
 
     def get_player(self, player_idx: int) -> Player:
         """Get Player instance by index."""
