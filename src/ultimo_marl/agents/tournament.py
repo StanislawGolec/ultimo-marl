@@ -129,7 +129,13 @@ class Tournament:
                 # Fog of War observation and action mask
                 obs = encode_observation(sim, curr_idx)
                 hand = sim.get_player(curr_idx).hand
-                mask = compute_action_mask(hand, sim.top_card, sim.active_color)
+                mask = compute_action_mask(
+                    hand,
+                    sim.top_card,
+                    sim.active_color,
+                    pending_skip_deflection=sim.pending_skip_deflection,
+                    pending_draw_penalty=sim.pending_draw_penalty,
+                )
 
                 action_id = agent.select_action(obs, mask)
 

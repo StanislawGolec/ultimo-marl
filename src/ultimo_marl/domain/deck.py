@@ -9,10 +9,45 @@ from collections.abc import Sequence
 from ultimo_marl.domain.card import Card, CardColor, CardValue
 
 
-class Deck:
-    """Represents the draw deck containing standard 108 Ultimo cards.
+def _build_standard_108_cards() -> tuple[Card, ...]:
+    """Build the canonical immutable 108-card Ultimo deck template once."""
+    cards: list[Card] = []
+    number_values = (
+        CardValue.ONE,
+        CardValue.TWO,
+        CardValue.THREE,
+        CardValue.FOUR,
+        CardValue.FIVE,
+        CardValue.SIX,
+        CardValue.SEVEN,
+        CardValue.EIGHT,
+        CardValue.NINE,
+    )
+    action_values = (CardValue.SKIP, CardValue.REVERSE, CardValue.DRAW_TWO)
 
-    Standard deck layout:
+    for color in CardColor.standard_colors():
+        cards.append(Card(color, CardValue.ZERO))
+        for val in number_values:
+            cards.append(Card(color, val))
+            cards.append(Card(color, val))
+        for val in action_values:
+            cards.append(Card(color, val))
+            cards.append(Card(color, val))
+
+    for _ in range(4):
+        cards.append(Card(CardColor.WILD, CardValue.WILD))
+        cards.append(Card(CardColor.WILD, CardValue.WILD_DRAW_FOUR))
+
+    return tuple(cards)
+
+
+_STANDARD_108_CARDS: tuple[Card, ...] = _build_standard_108_cards()
+
+
+class Deck:
+    """Represents the draw deck containing standard Ultimo cards (108 per deck).
+
+    Standard single-deck layout:
     - 19 Blue cards (one 0, two of 1-9)
     - 19 Green cards (one 0, two of 1-9)
     - 19 Red cards (one 0, two of 1-9)
@@ -22,53 +57,44 @@ class Deck:
     - 8 Skip cards (two in each color)
     - 4 Wild cards
     - 4 Wild Draw Four cards
-    Total = 108 cards.
+    Total = 108 * num_decks cards.
     """
 
-    def __init__(self, rng: random.Random | None = None) -> None:
+    def __init__(self, rng: random.Random | None = None, num_decks: int = 1) -> None:
+        if num_decks < 1:
+            raise ValueError(f"num_decks must be >= 1, got {num_decks}")
         self._rng = rng if rng is not None else random.Random()
+        self._num_decks = num_decks
         self._cards: deque[Card] = deque()
 
+    @property
+    def num_decks(self) -> int:
+        """Number of standard 108-card decks combined in this draw deck."""
+        return self._num_decks
+
     @classmethod
-    def create_standard_deck(cls, rng: random.Random | None = None) -> Deck:
-        """Create and shuffle a standard 108-card Ultimo deck."""
-        deck = cls(rng=rng)
-        cards: list[Card] = []
-
-        for color in CardColor.standard_colors():
-            # One 0 per color
-            cards.append(Card(color, CardValue.ZERO))
-
-            # Two of each 1-9 per color
-            number_values = (
-                CardValue.ONE,
-                CardValue.TWO,
-                CardValue.THREE,
-                CardValue.FOUR,
-                CardValue.FIVE,
-                CardValue.SIX,
-                CardValue.SEVEN,
-                CardValue.EIGHT,
-                CardValue.NINE,
-            )
-            for val in number_values:
-                cards.append(Card(color, val))
-                cards.append(Card(color, val))
-
-            # Two of each action card per color
-            action_values = (CardValue.SKIP, CardValue.REVERSE, CardValue.DRAW_TWO)
-            for val in action_values:
-                cards.append(Card(color, val))
-                cards.append(Card(color, val))
-
-        # Four Wild and four Wild Draw Four cards
-        for _ in range(4):
-            cards.append(Card(CardColor.WILD, CardValue.WILD))
-            cards.append(Card(CardColor.WILD, CardValue.WILD_DRAW_FOUR))
-
+    def create_standard(
+        cls,
+        num_decks: int = 1,
+        rng: random.Random | None = None,
+    ) -> Deck:
+        """Create and shuffle a multi-deck Ultimo draw pile (108 * num_decks cards)."""
+        if num_decks < 1:
+            raise ValueError(f"num_decks must be >= 1, got {num_decks}")
+        deck = cls(rng=rng, num_decks=num_decks)
+        cards: list[Card] = list(_STANDARD_108_CARDS * num_decks)
         deck._rng.shuffle(cards)
         deck._cards.extend(cards)
         return deck
+
+    @classmethod
+    def create_standard_deck(
+        cls,
+        rng: random.Random | None = None,
+        num_decks: int = 1,
+    ) -> Deck:
+        """Create and shuffle a standard Ultimo deck (alias accepting optional num_decks)."""
+        return cls.create_standard(num_decks=num_decks, rng=rng)
 
     def shuffle(self) -> None:
         """Shuffle remaining cards in the deck in-place."""

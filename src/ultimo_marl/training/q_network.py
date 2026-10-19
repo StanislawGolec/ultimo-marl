@@ -54,7 +54,7 @@ class DuelingQNetwork(nn.Module):
     Parameters
     ----------
     obs_dim : int
-        Observation vector dimensionality (default: OBSERVATION_DIM = 78).
+        Observation vector dimensionality (default: OBSERVATION_DIM = 90).
     action_dim : int
         Discrete action space dimensionality (default: NUM_ACTIONS = 61).
     hidden_dim : int
@@ -97,6 +97,27 @@ class DuelingQNetwork(nn.Module):
             nn.Linear(sub_hidden, action_dim),
         )
 
+    def adapt_observation(self, obs: torch.Tensor) -> torch.Tensor:
+        """Adapt legacy 78-dimensional observations to 90-dimensional trunk input (or vice versa)."""
+        last_dim = obs.shape[-1]
+        if last_dim == self.obs_dim:
+            return obs
+
+        if last_dim == 78 and self.obs_dim == 90:
+            # 78-dim layout: [0:72] top+hand, [72:75] 3 opponents, [75:78] 3 dynamics
+            # 90-dim layout: [0:72] top+hand, [72:87] 15 opponents, [87:90] 3 dynamics
+            pad_shape = (*obs.shape[:-1], 12)
+            opp_padding = torch.zeros(pad_shape, dtype=obs.dtype, device=obs.device)
+            return torch.cat([obs[..., :75], opp_padding, obs[..., 75:78]], dim=-1)
+
+        if last_dim == 90 and self.obs_dim == 78:
+            return torch.cat([obs[..., :75], obs[..., 87:90]], dim=-1)
+
+        if last_dim < self.obs_dim:
+            return nn.functional.pad(obs, (0, self.obs_dim - last_dim), value=0.0)
+
+        return obs[..., : self.obs_dim]
+
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Forward pass to compute unmasked Q-values for all actions.
 
@@ -110,7 +131,8 @@ class DuelingQNetwork(nn.Module):
         torch.Tensor
             Q-values tensor of shape (batch_size, action_dim).
         """
-        features: torch.Tensor = self.feature_trunk(obs)
+        adapted_obs = self.adapt_observation(obs)
+        features: torch.Tensor = self.feature_trunk(adapted_obs)
         values: torch.Tensor = self.value_stream(features)
         advantages: torch.Tensor = self.advantage_stream(features)
 
@@ -123,7 +145,8 @@ class DuelingQNetwork(nn.Module):
 
         Useful for telemetry and explainability inspection.
         """
-        features: torch.Tensor = self.feature_trunk(obs)
+        adapted_obs = self.adapt_observation(obs)
+        features: torch.Tensor = self.feature_trunk(adapted_obs)
         values: torch.Tensor = self.value_stream(features)
         advantages: torch.Tensor = self.advantage_stream(features)
         return values, advantages

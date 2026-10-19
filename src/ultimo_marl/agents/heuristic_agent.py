@@ -51,8 +51,11 @@ class RuleBasedHeuristicAgent(BaseAgent):
         # Offset 72 is normalized card count of next player in clockwise rotation
         next_opp_norm = float(obs[72])
         next_opp_cards = int(round(next_opp_norm * 10.0))
-        # Offset 76 is any_opp_ultimo flag (1.0 if any opponent has <= 1 card)
-        any_opp_ultimo = float(obs[76]) > 0.5
+        if len(obs) >= 90:
+            # Check if any active opponent slot (72..87) holds 1 card (normalized ~ 0.1)
+            any_opp_ultimo = any(0.0 < float(obs[72 + i]) <= 0.15 for i in range(15))
+        else:
+            any_opp_ultimo = float(obs[76]) > 0.5
         next_opp_in_danger = next_opp_cards <= 3 or any_opp_ultimo
 
         # Group standard actions by action type (value index = action % 13)

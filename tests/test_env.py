@@ -135,7 +135,7 @@ def test_compute_action_mask_invariants() -> None:
 
 
 def test_observation_vectorizer_fog_of_war() -> None:
-    """Verify observation vector size 78, [0.0, 1.0] bounds, and strict Fog of War."""
+    """Verify observation vector size 90, [0.0, 1.0] bounds, and strict Fog of War."""
     sim = UltimoSimulator(num_players=4, seed=42)
     sim.reset()
 
@@ -150,13 +150,18 @@ def test_observation_vectorizer_fog_of_war() -> None:
     # Top card active color is one-hot
     assert np.sum(obs_p0[0:4]) == 1.0
 
-    # Opponent card counts (offsets 72..75):
+    # Opponent card counts (offsets 72..75 active, 75..87 padded with 0.0):
     # Starting hands have 7 cards -> 7 / 10.0 = 0.7
     for opp_offset in range(72, 75):
         assert np.isclose(obs_p0[opp_offset], 0.7)
+    for padded_offset in range(75, 87):
+        assert obs_p0[padded_offset] == 0.0
 
-    # Direction offset 75: 1.0 for clockwise
-    assert obs_p0[75] == 1.0
+    # Direction offset 87: 1.0 for clockwise
+    assert obs_p0[87] == 1.0
+    # Defense dynamics offsets 88..89: 0.0 initially
+    assert obs_p0[88] == 0.0
+    assert obs_p0[89] == 0.0
 
 
 # ============================================================================

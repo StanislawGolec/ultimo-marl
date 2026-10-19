@@ -137,7 +137,7 @@ def test_live_game_state_observation_and_mask() -> None:
     )
 
     obs = state.encode_observation()
-    assert obs.shape == (78,)
+    assert obs.shape == (90,)
     assert obs.dtype == np.float32
     assert (obs >= 0.0).all() and (obs <= 1.0).all()
 

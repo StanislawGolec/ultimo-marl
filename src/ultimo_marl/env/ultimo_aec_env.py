@@ -193,11 +193,18 @@ class UltimoAECEnv(AECEnv):
         for agent in self.agents:
             p_idx = self._agent_name_to_idx[agent]
             hand = self._sim.get_player(p_idx).hand
-            mask = compute_action_mask(hand, self._sim.top_card, self._sim.active_color)
+            is_active = agent == self.agent_selection
+            mask = compute_action_mask(
+                hand,
+                self._sim.top_card,
+                self._sim.active_color,
+                pending_skip_deflection=self._sim.pending_skip_deflection if is_active else False,
+                pending_draw_penalty=self._sim.pending_draw_penalty if is_active else 0,
+            )
             self.infos[agent] = {
                 "action_mask": mask,
-                "card_count": hand.card_count if hasattr(hand, "card_count") else len(hand),
-                "is_active_turn": (agent == self.agent_selection),
+                "card_count": len(hand),
+                "is_active_turn": is_active,
             }
 
     def render(self) -> str | None:

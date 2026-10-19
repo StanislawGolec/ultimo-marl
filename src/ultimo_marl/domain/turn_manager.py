@@ -18,7 +18,15 @@ class Direction(IntEnum):
 
 
 class TurnManager:
-    """Manages cyclic player rotation, skips, and direction reversals."""
+    """Manages cyclic player rotation, skips, direction reversals, and defense states."""
+
+    __slots__ = (
+        "_current_index",
+        "_direction",
+        "_num_players",
+        "pending_draw_penalty",
+        "pending_skip_deflection",
+    )
 
     def __init__(self, num_players: int) -> None:
         if num_players < 2:
@@ -26,6 +34,8 @@ class TurnManager:
         self._num_players = num_players
         self._current_index = 0
         self._direction = Direction.CLOCKWISE
+        self.pending_skip_deflection: bool = False
+        self.pending_draw_penalty: int = 0
 
     @property
     def current_index(self) -> int:

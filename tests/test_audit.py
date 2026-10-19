@@ -302,7 +302,13 @@ def test_simulation_throughput_benchmark() -> None:
     while steps < target_steps:
         p_idx = sim.current_player_idx
         p = sim.get_player(p_idx)
-        playable = get_playable_cards(p.hand, sim.top_card, sim.active_color)
+        playable = get_playable_cards(
+            p.hand,
+            sim.top_card,
+            sim.active_color,
+            pending_skip_deflection=sim.pending_skip_deflection,
+            pending_draw_penalty=sim.pending_draw_penalty,
+        )
 
         if playable:
             chosen = playable[0]

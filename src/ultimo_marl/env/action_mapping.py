@@ -33,6 +33,9 @@ STANDARD_VALUES: tuple[CardValue, ...] = (
     CardValue.DRAW_TWO,
 )
 
+_SUIT_TO_IDX: dict[CardColor, int] = {suit: idx for idx, suit in enumerate(STANDARD_SUITS)}
+_VALUE_TO_IDX: dict[CardValue, int] = {val: idx for idx, val in enumerate(STANDARD_VALUES)}
+
 ACTION_DRAW: int = 60
 WILD_START_IDX: int = 52
 WILD_DRAW4_START_IDX: int = 56
@@ -43,7 +46,7 @@ def card_to_action_id(card: Card, chosen_wild_color: CardColor | None = None) ->
     if card.value == CardValue.WILD:
         if chosen_wild_color is None or not chosen_wild_color.is_standard_color():
             raise ValueError(f"WILD card requires a valid standard color, got {chosen_wild_color}")
-        color_idx = STANDARD_SUITS.index(chosen_wild_color)
+        color_idx = _SUIT_TO_IDX[chosen_wild_color]
         return WILD_START_IDX + color_idx
 
     if card.value == CardValue.WILD_DRAW_FOUR:
@@ -51,11 +54,11 @@ def card_to_action_id(card: Card, chosen_wild_color: CardColor | None = None) ->
             raise ValueError(
                 f"WILD_DRAW_FOUR requires a valid standard color, got {chosen_wild_color}"
             )
-        color_idx = STANDARD_SUITS.index(chosen_wild_color)
+        color_idx = _SUIT_TO_IDX[chosen_wild_color]
         return WILD_DRAW4_START_IDX + color_idx
 
-    suit_idx = STANDARD_SUITS.index(card.color)
-    val_idx = STANDARD_VALUES.index(card.value)
+    suit_idx = _SUIT_TO_IDX[card.color]
+    val_idx = _VALUE_TO_IDX[card.value]
     return suit_idx * 13 + val_idx
 
 
@@ -89,8 +92,10 @@ def action_id_to_card_and_color(
 
 def compute_action_mask(
     hand: PlayerHand,
-    top_card: Card | None,
-    active_color: CardColor | None,
+    top_card: Card | None = None,
+    active_color: CardColor | None = None,
+    pending_skip_deflection: bool = False,
+    pending_draw_penalty: int = 0,
 ) -> np.ndarray:
     """Compute legal action mask of shape (61,) with dtype np.int8 (1=legal, 0=illegal).
 
@@ -99,17 +104,39 @@ def compute_action_mask(
     """
     mask = np.zeros(NUM_ACTIONS, dtype=np.int8)
 
-    # DRAW action is always available on your turn
+    # DRAW action is always available on your turn (or to accept active defense penalty)
     mask[ACTION_DRAW] = 1
+
+    # 1. Tactical Skip Deflection Masking Rule:
+    # Only Skip cards in hand and ACTION_DRAW are legal.
+    if pending_skip_deflection:
+        for card in hand._cards:
+            if card.value == CardValue.SKIP:
+                mask[card_to_action_id(card)] = 1
+        return mask
+
+    # 2. Tactical Draw Stacking Masking Rule:
+    # Only matching Draw Two / Wild Draw Four cards in hand and ACTION_DRAW are legal.
+    if pending_draw_penalty > 0:
+        has_w4 = False
+        for card in hand._cards:
+            if card.value == CardValue.DRAW_TWO:
+                mask[card_to_action_id(card)] = 1
+            elif card.value == CardValue.WILD_DRAW_FOUR:
+                has_w4 = True
+        if has_w4:
+            for idx in range(WILD_DRAW4_START_IDX, ACTION_DRAW):
+                mask[idx] = 1
+        return mask
 
     if top_card is None or active_color is None:
         return mask
 
-    # Check each card in hand
+    # 3. Standard Turn Legality Check
     has_regular_wild = False
     has_wild_draw4 = False
 
-    for card in hand.cards:
+    for card in hand._cards:
         if card.value == CardValue.WILD:
             has_regular_wild = True
         elif card.value == CardValue.WILD_DRAW_FOUR:

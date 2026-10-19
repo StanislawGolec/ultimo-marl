@@ -299,26 +299,36 @@ def test_simulator_special_card_resolutions() -> None:
     # Manually configure table and hands for deterministic testing
     p0 = sim.get_player(0)
 
-    # 1. Skip resolution: Player 0 plays SKIP -> skips Player 1, Player 2 is next
+    # 1. Skip resolution: Player 0 plays SKIP -> Player 1 faces pending_skip_deflection; accepting skips to Player 2
     skip_card = Card(sim.active_color, CardValue.SKIP)  # type: ignore[arg-type]
     p0.hand.add_card(skip_card)
 
     res = sim.play_cards(0, [skip_card])
     assert res.success is True
-    assert sim.current_player_idx == 2  # 0 -> 2 (player 1 skipped)
+    assert bool(sim.pending_skip_deflection) is True
+    assert int(sim.current_player_idx) == 1
+    assert sim.pass_turn(1) is True
+    assert bool(sim.pending_skip_deflection) is False
+    assert int(sim.current_player_idx) == 2  # 0 -> 2 (player 1 skipped)
 
-    # 2. Draw Two resolution: Player 2 plays DRAW_TWO -> Player 3 draws 2 and is skipped, Player 0 is next
+    # 2. Draw Two resolution: Player 2 plays DRAW_TWO -> Player 3 faces +2 penalty; drawing takes 2 and skips to Player 0
     p2 = sim.get_player(2)
     p3 = sim.get_player(3)
     p3_count_before = p3.card_count
 
-    draw2_card = Card(sim.active_color, CardValue.DRAW_TWO)  # type: ignore[arg-type]
+    active_c = sim.active_color
+    assert active_c is not None
+    draw2_card = Card(active_c, CardValue.DRAW_TWO)
     p2.hand.add_card(draw2_card)
 
     res2 = sim.play_cards(2, [draw2_card])
     assert res2.success is True
+    assert int(sim.pending_draw_penalty) == 2
+    assert int(sim.current_player_idx) == 3
+    sim.draw_card(3)
+    assert int(sim.pending_draw_penalty) == 0
     assert p3.card_count == p3_count_before + 2
-    assert sim.current_player_idx == 0  # 2 -> 0 (player 3 skipped)
+    assert int(sim.current_player_idx) == 0  # 2 -> 0 (player 3 skipped)
 
 
 def test_simulator_win_detection_and_scoring() -> None:
@@ -360,7 +370,13 @@ def test_simulation_speed_benchmark() -> None:
         step_count = 0
         while not sim.is_game_over and step_count < 200:
             curr = sim.current_player_idx
-            playable = get_playable_cards(sim.get_player(curr).hand, sim.top_card, sim.active_color)
+            playable = get_playable_cards(
+                sim.get_player(curr).hand,
+                sim.top_card,
+                sim.active_color,
+                pending_skip_deflection=sim.pending_skip_deflection,
+                pending_draw_penalty=sim.pending_draw_penalty,
+            )
             if playable:
                 chosen = playable[0]
                 wild_color = CardColor.RED if chosen.is_wild else None
@@ -515,7 +531,7 @@ def test_simulator_edge_cases() -> None:
 
 
 def test_simulator_wild_draw_four() -> None:
-    """Test Wild Draw Four execution gives 4 cards to victim and skips victim."""
+    """Test Wild Draw Four execution accumulates +4 penalty and victim draws 4 on draw_card."""
     sim = UltimoSimulator(num_players=4, seed=101)
     sim.reset()
 
@@ -529,5 +545,10 @@ def test_simulator_wild_draw_four() -> None:
 
     res_w4 = sim.play_cards(curr_idx, [w4], chosen_wild_color=CardColor.YELLOW)
     assert res_w4.success is True
-    assert sim.get_player(next_idx).card_count == victim_count_before + 4
     assert sim.active_color == CardColor.YELLOW
+    assert sim.pending_draw_penalty == 4
+    assert sim.current_player_idx == next_idx
+
+    sim.draw_card(next_idx)
+    assert sim.pending_draw_penalty == 0
+    assert sim.get_player(next_idx).card_count == victim_count_before + 4
